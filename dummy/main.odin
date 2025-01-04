@@ -9,6 +9,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:math/ease"
 import "core:mem"
+import "core:slice"
 
 import sapp "sokol/app"
 import sg "sokol/gfx"
@@ -61,6 +62,10 @@ init :: proc "c" () {
 
 	// :init
 	gs = &app_state.game
+
+    for &e, kind in entity_data {
+        setup_entity(&e, kind)
+    }
 
 	// make the vertex buffer
 	app_state.bind.vertex_buffers[0] = sg.make_buffer({
@@ -131,16 +136,25 @@ frame :: proc "c" () {
 	using runtime, linalg
 	context = runtime.default_context()
 
-	memset(&draw_frame, 0, size_of(draw_frame))
+	draw_frame.reset = {}
 
 	update()
+	render()
 
 	dt := sapp.frame_duration()
 
-	render()
-
 	app_state.bind.images[IMG_tex0] = atlas.sg_image
 	app_state.bind.images[IMG_tex1] = images[font.img_id].sg_img
+
+	verts: Raw_Slice
+	verts.len = draw_frame.quad_count
+	verts.data = &draw_frame.quads[0]
+
+	_v := transmute([]Quad)verts
+
+	slice.stable_sort_by_cmp(_v, proc(a, b: Quad) -> slice.Ordering{
+		return slice.cmp(a[0].z_layer, b[0].z_layer)
+	})
 
 	sg.update_buffer(
 		app_state.bind.vertex_buffers[0],
@@ -235,16 +249,16 @@ sine_breathe :: proc(p: $T) -> T where intrinsics.type_is_float(T) {
 //
 // API ordered highest -> lowest level
 
-draw_sprite :: proc(pos: Vector2, img_id: Image_Id, pivot:= Pivot.bottom_left, xform := Matrix4(1), color_override:= v4{0,0,0,0}) {
+draw_sprite :: proc(pos: Vector2, img_id: Image_Id, pivot:= Pivot.bottom_left, xform := Matrix4(1), color_override:= v4{0,0,0,0}, z_layer := ZLayer.nil) {
 	image := images[img_id]
 	size := v2{auto_cast image.width, auto_cast image.height}
 
 	xform0 := Matrix4(1)
 	xform0 *= xform_translate(pos)
-	xform0 *= xform // we slide in here because rotations + scales work nicely at this point
+	xform0 *= xform
 	xform0 *= xform_translate(size * -scale_from_pivot(pivot))
 
-	draw_rect_xform(xform0, size, img_id=img_id, color_override=color_override)
+	draw_rect_xform(xform0, size, img_id=img_id, color_override=color_override, z_layer=z_layer)
 }
 
 draw_rect_aabb :: proc(
@@ -254,9 +268,10 @@ draw_rect_aabb :: proc(
 	uv: Vector4=DEFAULT_UV,
 	img_id: Image_Id=.nil,
 	color_override:= v4{0,0,0,0},
+	z_layer := ZLayer.nil,
 ) {
 	xform := linalg.matrix4_translate(v3{pos.x, pos.y, 0})
-	draw_rect_xform(xform, size, col, uv, img_id, color_override)
+	draw_rect_xform(xform, size, col, uv, img_id, color_override, z_layer=z_layer)
 }
 
 draw_rect_xform :: proc(
@@ -266,8 +281,9 @@ draw_rect_xform :: proc(
 	uv: Vector4=DEFAULT_UV,
 	img_id: Image_Id=.nil,
 	color_override:= v4{0,0,0,0},
+	z_layer := ZLayer.nil,
 ) {
-	draw_rect_projected(draw_frame.projection * draw_frame.camera_xform * xform, size, col, uv, img_id, color_override)
+	draw_rect_projected(draw_frame.projection * draw_frame.camera_xform * xform, size, col, uv, img_id, color_override, z_layer=z_layer)
 }
 
 Vertex :: struct {
@@ -275,7 +291,8 @@ Vertex :: struct {
 	col: Vector4,
 	uv: Vector2,
 	tex_index: u8,
-	_pad: [3]u8,
+	z_layer: u8,
+	_: [2]u8,
 	color_override: Vector4,
 }
 
@@ -285,15 +302,22 @@ MAX_QUADS :: 8192
 MAX_VERTS :: MAX_QUADS * 4
 
 Draw_Frame :: struct {
-
 	quads: [MAX_QUADS]Quad,
-	quad_count: int,
 
-	projection: Matrix4,
-	camera_xform: Matrix4,
-
+    using reset: struct {
+        projection: Matrix4,
+        camera_xform: Matrix4,
+        quad_count: int,
+    }
 }
-draw_frame : Draw_Frame;
+draw_frame : Draw_Frame
+
+ZLayer :: enum u8{
+    nil,
+    background1,
+    player,
+    ui,
+}
 
 // below is the lower level draw rect stuff
 
@@ -303,7 +327,8 @@ draw_rect_projected :: proc(
 	col: Vector4=COLOR_WHITE,
 	uv: Vector4=DEFAULT_UV,
 	img_id: Image_Id=.nil,
-	color_override:= v4{0,0,0,0}
+	color_override:= v4{0,0,0,0},
+	z_layer := ZLayer.nil,
 ) {
 
 	bl := v2{ 0, 0 }
@@ -321,7 +346,7 @@ draw_rect_projected :: proc(
 		tex_index = 255 // bypasses texture sampling
 	}
 
-	draw_quad_projected(world_to_clip, {bl, tl, tr, br}, {col, col, col, col}, {uv0.xy, uv0.xw, uv0.zw, uv0.zy}, {tex_index,tex_index,tex_index,tex_index}, {color_override,color_override,color_override,color_override})
+	draw_quad_projected(world_to_clip, {bl, tl, tr, br}, {col, col, col, col}, {uv0.xy, uv0.xw, uv0.zw, uv0.zy}, {tex_index,tex_index,tex_index,tex_index}, {color_override,color_override,color_override,color_override}, z_layer = z_layer)
 
 }
 
@@ -333,6 +358,7 @@ draw_quad_projected :: proc(
 	tex_indicies:       [4]u8,
 	//flags:           [4]Quad_Flags,
 	color_overrides: [4]Vector4,
+	z_layer: ZLayer=.nil,
 	//hsv:             [4]Vector3
 ) {
 	using linalg
@@ -369,6 +395,11 @@ draw_quad_projected :: proc(
 	verts[1].color_override = color_overrides[1]
 	verts[2].color_override = color_overrides[2]
 	verts[3].color_override = color_overrides[3]
+
+	verts[0].z_layer = u8(z_layer)
+	verts[1].z_layer = u8(z_layer)
+	verts[2].z_layer = u8(z_layer)
+	verts[3].z_layer = u8(z_layer)
 }
 
 //
@@ -443,7 +474,7 @@ pack_images_into_atlas :: proc() {
     }
 
     min_size := 128
-    for min_size * min_size < total_area * 2 { // * 2 for some padding
+    for min_size * min_size < total_area * 2 {
         min_size *= 2
     }
 
@@ -681,12 +712,6 @@ update :: proc() {
 
 	player := get_player()
 
-	if length(player.frame.input_axis) != 0 {
-		player.frame.input_axis = normalize(player.frame.input_axis)
-	}
-
-	player.pos += player.frame.input_axis * 200.0 * f32(dt)
-
 	gs.ticks += 1
 }
 
@@ -698,7 +723,7 @@ render :: proc() {
 	draw_frame.camera_xform = Matrix4(1)
 	draw_frame.camera_xform *= xform_scale(f32(window_h) / f32(game_res_h))
 
-    draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.background_1)
+    draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.background_1, z_layer = .background1)
 
 	for &en in gs.entities {
 		if .allocated in en.flags {
@@ -720,15 +745,31 @@ render :: proc() {
 	gs.ticks += 1
 }
 
-draw_player :: proc(en: Entity) {
-	draw_sprite(en.pos, .player_move1, pivot=.bottom_center)
-}
-
 draw_player_at_pos :: proc(en: Entity, pos: Vector2) {
     xform := Matrix4(1)
     xform *= xform_scale(v2{3.2, 3.2})
 
-    draw_sprite(pos, .player_move1, pivot=.bottom_center, xform = xform)
+    draw_sprite(pos, .player_move1, pivot=.bottom_center, xform = xform, z_layer = .player)
+}
+
+mouse_pos_in_world_space :: proc() -> Vector2 {
+	if draw_frame.projection == {} {
+		log_error("no projection matrix set yet")
+	}
+
+	mouse := v2{app_state.input_state.mouse_x, app_state.input_state.mouse_y}
+	ndc_x := (mouse.x / (f32(window_w) * 0.5)) - 1.0;
+	ndc_y := (mouse.y / (f32(window_h) * 0.5)) - 1.0;
+	ndc_y *= -1
+
+	mouse_ndc := v2{ndc_x, ndc_y}
+
+	mouse_world :v4= v4{mouse_ndc.x, mouse_ndc.y, 0, 1}
+
+	mouse_world *= linalg.inverse(draw_frame.projection)
+	mouse_world *= linalg.inverse(draw_frame.camera_xform)
+
+	return mouse_world.xy
 }
 
 //
@@ -758,9 +799,18 @@ Entity :: struct {
 	}
 }
 
+entity_data: [Entity_Kind]Entity
+
 Entity_Handle :: struct {
     id: u64,
     index: int,
+}
+
+setup_entity :: proc(e: ^Entity, kind: Entity_Kind){
+    switch kind{
+        case .nil: log_error("NO ENTITY PASSED IN SETUP")
+        case .player: setup_player(e)
+    }
 }
 
 handle_to_entity :: proc(handle: Entity_Handle) -> ^Entity {
@@ -958,6 +1008,7 @@ Input_State_Flags :: enum {
 
 Input_State :: struct {
 	keys: [MAX_KEYCODES]bit_set[Input_State_Flags],
+	mouse_x, mouse_y: f32,
 }
 
 reset_input_state_for_next_frame :: proc(state: ^Input_State) {
@@ -992,6 +1043,9 @@ event :: proc "c" (event: ^sapp.Event) {
 		if !(.down in input_state.keys[map_sokol_mouse_button(event.mouse_button)]) {
 			input_state.keys[map_sokol_mouse_button(event.mouse_button)] += { .down, .just_pressed }
 		}
+
+		case .MOUSE_MOVE:
+		input_state.mouse_x = event.mouse_x
 
 		case .KEY_UP:
 		if .down in input_state.keys[event.key_code] {

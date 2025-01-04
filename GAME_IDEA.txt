@@ -8,3 +8,11 @@ Main mechanics:
     Quests -> Only ONE can be active at a time. They have their own level system, but instead of XP, they are upgraded depending on the level of the particular Skill they refer to. Their job is to reward something to the player every certain amount of time. New quests are unlocked depending on the skill level too. They are related to a certain SKILL, for example, the quest "CONCENTRATION" requires concentration skill to be level 1 to be unlocked.
     Upgrades -> These are bought by the player with gold. Once bought, they stay active for the rest of the gameplay. Their goal is to upgrade anything that does not have to do with the base stats of the player itself, but the stuff that the player interacts with. For example new types of arrows, more target dummies (the game starts with 1 one only), making targets spawn automatically, buying different types of targets, etc). This is the most simple system since they do not depend on any other system to be unlocked or upgraded.
 
+The character shoots automatically, no input from the player. The target dummies take damage and after their health goes to 0, they get destroyed, giving the player a certain amount of XP. This XP is not used for the player
+itself, it is used for the SKILLS system explained above.
+
+The SKILLS system depends on the QUESTS system and viceversa. These systems work together, to unlock a new quest you need a certain level in a skill, but to level up that certain skill you need gold, and the gold comes from the quests.
+
+At the start of the game there is only one target dummy and the player shoots at it.
+When a target dummy gets destroyed a button should appear to craft a new one. Each of the iterations will be started manually by the player.
+
