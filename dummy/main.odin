@@ -376,7 +376,7 @@ draw_quad_projected :: proc(
 //
 Image_Id :: enum {
 	nil,
-	player,
+	player_move1,
 	background_1
 }
 
@@ -698,13 +698,13 @@ render :: proc() {
 	draw_frame.camera_xform = Matrix4(1)
 	draw_frame.camera_xform *= xform_scale(f32(window_h) / f32(game_res_h))
 
-	draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.background_1)
+    draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.background_1)
 
 	for &en in gs.entities {
 		if .allocated in en.flags {
 			#partial switch en.kind {
 				case .player: {
-				    draw_player_at_pos(en, v2{0, 0})
+				    draw_player_at_pos(en, v2{-480, -330})
 				}
 			}
 		}
@@ -721,11 +721,14 @@ render :: proc() {
 }
 
 draw_player :: proc(en: Entity) {
-	draw_sprite(en.pos, .player, pivot=.bottom_center)
+	draw_sprite(en.pos, .player_move1, pivot=.bottom_center)
 }
 
 draw_player_at_pos :: proc(en: Entity, pos: Vector2) {
-    draw_sprite(pos, .player, pivot=.bottom_center)
+    xform := Matrix4(1)
+    xform *= xform_scale(v2{3.2, 3.2})
+
+    draw_sprite(pos, .player_move1, pivot=.bottom_center, xform = xform)
 }
 
 //
