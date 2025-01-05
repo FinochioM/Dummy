@@ -888,11 +888,22 @@ spawn_dummy :: proc(position: Vector2) -> ^Entity {
 // :player
 update_player :: proc(player: ^Entity, dt: f32) {
     player.shoot_cooldown -= dt
-    if player.shoot_cooldown <= 0{
+
+    if player.shoot_cooldown <= 0 {
         target := find_random_target()
         if target != nil {
             shoot_arrow(player, target)
-            player.shoot_cooldown = SHOOT_COOLDOWN
+
+            base_cooldown := SHOOT_COOLDOWN
+            if system := &gs.skills_system; system.is_unlocked {
+                for &skill in system.skills {
+                    if skill.is_unlocked && skill.type == .speed_boost {
+                        speed_bonus := calculate_skill_bonus(&skill)
+                        base_cooldown *= (1.0 - f64(speed_bonus))
+                    }
+                }
+            }
+            player.shoot_cooldown = f32(base_cooldown)
         }
     }
 }
@@ -1011,9 +1022,29 @@ Entity_Handle :: struct {
     index: int,
 }
 
-damage_entity :: proc(e: ^Entity, amount: f32){
-    e.health -= amount
+damage_entity :: proc(e: ^Entity, base_damage: f32) {
+    damage := base_damage
+    crit_occurred := false
 
+    if system := &gs.skills_system; system.is_unlocked {
+        for &skill in system.skills {
+            if skill.is_unlocked {
+                #partial switch skill.type {
+                    case .strength_boost:
+                        strength_bonus := calculate_skill_bonus(&skill)
+                        damage *= (1.0 + strength_bonus)
+                    case .critical_boost:
+                        crit_chance := calculate_skill_bonus(&skill)
+                        if rand.float32() < crit_chance {
+                            damage *= 2.0
+                            crit_occurred = true
+                        }
+                }
+            }
+        }
+    }
+
+    e.health -= damage
     if e.health <= 0 {
         entity_destroy(e)
     }
@@ -1306,12 +1337,9 @@ event :: proc "c" (event: ^sapp.Event) {
 		if .down in input_state.keys[map_sokol_mouse_button(event.mouse_button)] {
 			input_state.keys[map_sokol_mouse_button(event.mouse_button)] -= { .down }
 			input_state.keys[map_sokol_mouse_button(event.mouse_button)] += { .just_released }
-			fmt.println("Mouse UP at:", event.mouse_x, event.mouse_y)
 		}
 		case .MOUSE_DOWN:
 		if !(.down in input_state.keys[map_sokol_mouse_button(event.mouse_button)]) {
-			input_state.keys[map_sokol_mouse_button(event.mouse_button)] += { .down, .just_pressed }
-			fmt.println("Mouse DOWN at:", event.mouse_x, event.mouse_y)
 		}
 
 		case .MOUSE_MOVE:
@@ -1636,6 +1664,9 @@ check_spawn_button :: proc() {
 Skill_Type :: enum {
     nil,
     xp_boost,
+    strength_boost,
+    speed_boost,
+    critical_boost,
 }
 
 Skill :: struct {
@@ -1653,6 +1684,16 @@ Skills_System :: struct {
     active_skill: ^Skill,
     dummies_killed: int,
     is_unlocked: bool,
+    gold: int,
+    menu_open: bool,
+}
+
+SKILL_COSTS :: [Skill_Type]int {
+    .nil = 0,
+    .xp_boost = 0,
+    .strength_boost = 300,
+    .speed_boost = 500,
+    .critical_boost = 800,
 }
 
 init_skills_system :: proc() -> Skills_System {
@@ -1661,19 +1702,30 @@ init_skills_system :: proc() -> Skills_System {
         active_skill = nil,
         dummies_killed = 0,
         is_unlocked = false,
+        gold = 10000,
+        menu_open = false,
     }
 
-    xp_boost_skill := Skill {
-        type = .xp_boost,
-        name = "Experience Mastery",
-        level = 1,
-        current_xp = 0,
-        xp_to_next_level = 100,
-        description = "Increases experience gained from destroying dummies",
-        is_unlocked = false,
+    skill_data := []struct{type: Skill_Type, name, desc: string}{
+        {.xp_boost, "Experience Mastery", "Increases experience gained from destroying dummies by 5% per level"},
+        {.strength_boost, "Strength Mastery", "Increases arrow damage by 5% per level"},
+        {.speed_boost, "Speed Mastery", "Increases attack speed by 5% per level"},
+        {.critical_boost, "Critical Mastery", "Increases critical hit chance by 1% per level"},
     }
 
-    append(&system.skills, xp_boost_skill)
+    for data in skill_data {
+        skill := Skill {
+            type = data.type,
+            name = data.name,
+            level = 1,
+            current_xp = 0,
+            xp_to_next_level = 100,
+            description = data.desc,
+            is_unlocked = false,
+        }
+
+        append(&system.skills, skill)
+    }
 
     return system
 }
@@ -1686,6 +1738,23 @@ calculate_xp_boost :: proc(skill: ^Skill) -> f32{
     base_boost := 0.05
     level_boost := 0.05 * f32(skill.level - 1)
     return 1.0 + f32(base_boost) + f32(level_boost)
+}
+
+calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
+    if skill == nil {
+        return 0.0
+    }
+
+    base_bonus: f32
+    #partial switch skill.type {
+        case .xp_boost: base_bonus = 0.05
+        case .strength_boost: base_bonus = 0.05
+        case .speed_boost: base_bonus = 0.05
+        case .critical_boost: base_bonus = 0.01
+        case: return 0.0
+    }
+
+    return base_bonus * f32(skill.level)
 }
 
 add_xp_to_active_skill :: proc(system: ^Skills_System, base_xp: int) {
@@ -1717,12 +1786,131 @@ check_skills_unlock :: proc(system: ^Skills_System) {
     }
 }
 
+unlock_skill :: proc(system: ^Skills_System, skill: ^Skill) {
+    cost := get_skill_cost(skill.type)
+    if system.gold >= cost {
+        system.gold -= cost
+        skill.is_unlocked = true
+        if system.active_skill == nil {
+            system.active_skill = skill
+        }
+    }
+}
+
+get_skill_cost :: proc(type: Skill_Type) -> int {
+    switch type {
+        case .nil: return 0
+        case .xp_boost: return 0
+        case .strength_boost: return 300
+        case .speed_boost: return 500
+        case .critical_boost: return 800
+    }
+    return 0
+}
+
 render_skills_ui :: proc() {
-    skill := gs.skills_system.active_skill
-    if skill == nil {
+    system := &gs.skills_system
+    if system == nil || !system.is_unlocked {
         return
     }
 
+    button_pos := v2{-620, 340}
+    button_size := v2{120, 30}
+    draw_rect_aabb(button_pos, button_size, col = v4{0.2, 0.2, 0.2, 1}, z_layer = .ui)
+    text_pos := button_pos + v2{10, 8}
+    draw_text(text_pos, "Skills Menu", z_layer = .ui)
+
+    mouse_pos := mouse_pos_in_world_space()
+    button_bounds := aabb_make(button_pos, button_size, .bottom_left)
+    if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
+        system.menu_open = !system.menu_open
+    }
+
+    if !system.menu_open {
+        if system.active_skill != nil {
+            render_active_skill_ui(system.active_skill)
+        }
+        return
+    }
+
+    menu_pos := v2{-620, 320}
+    menu_size := v2{300, 400}
+    draw_rect_aabb(menu_pos, menu_size, col = v4{0.1, 0.1, 0.1, 0.9}, z_layer = .ui)
+
+    gold_pos := menu_pos + v2{10, -30}
+    draw_text(gold_pos, fmt.tprintf("Gold: %d", system.gold), scale = 1.2, z_layer = .ui)
+
+    skill_y := menu_pos.y - 70
+    for &skill in system.skills {
+        render_skill_entry(&skill, v2{menu_pos.x + 10, skill_y}, system)
+        skill_y -= 80
+    }
+}
+
+render_skill_entry :: proc(skill: ^Skill, pos: Vector2, system: ^Skills_System) {
+    is_active := system.active_skill == skill
+    bg_color := is_active ? v4{0.3, 0.3, 0.3, 0.8} : v4{0.2, 0.2, 0.2, 0.8}
+
+    entry_size := v2{280, 70}
+    draw_rect_aabb(pos, entry_size, col = bg_color, z_layer = .ui)
+
+    if skill.is_unlocked {
+        name_pos := pos + v2{5, 5}
+        draw_text(name_pos, fmt.tprintf("%s (Level %d)", skill.name, skill.level), z_layer = .ui)
+
+        bar_pos := name_pos + v2{0, -20}
+        bar_width := 180.0
+        bar_height := 10.0
+        draw_rect_aabb(bar_pos, v2{auto_cast bar_width, auto_cast bar_height}, col = v4{0.1, 0.1, 0.1, 1}, z_layer = .ui)
+        xp_ratio := f32(skill.current_xp) / f32(skill.xp_to_next_level)
+        draw_rect_aabb(bar_pos, v2{auto_cast bar_width * xp_ratio, auto_cast bar_height}, col = v4{0, 0.8, 0.2, 1}, z_layer = .ui)
+
+        if !is_active {
+            button_pos := pos + v2{200, 5}
+            button_size := v2{70, 25}
+            draw_rect_aabb(button_pos, button_size, col = v4{0.3, 0.5, 0.3, 1}, z_layer = .ui)
+            text_pos := button_pos + v2{10, 5}
+            draw_text(text_pos, "Select", z_layer = .ui)
+
+            mouse_pos := mouse_pos_in_world_space()
+            button_bounds := aabb_make(button_pos, button_size, .bottom_left)
+            if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
+                system.active_skill = skill
+            }
+        }
+
+        bonus_text_pos := pos + v2{5, -45}
+        bonus := calculate_skill_bonus(skill) * 100
+        draw_text(bonus_text_pos, fmt.tprintf("Bonus: +%.1f%%", bonus), z_layer = .ui)
+    } else {
+        name_pos := pos + v2{5, 5}
+        draw_text(name_pos, skill.name, z_layer = .ui)
+
+        cost := get_skill_cost(skill.type)
+        cost_pos := pos + v2{5, -20}
+        draw_text(cost_pos, fmt.tprintf("Cost: %d gold", cost), z_layer = .ui)
+
+
+        can_afford := system.gold >= cost
+        button_color := can_afford ? v4{0.3, 0.5, 0.3, 1} : v4{0.5, 0.3, 0.3, 1}
+
+        button_pos := pos + v2{200, 5}
+        button_size := v2{70, 25}
+        draw_rect_aabb(button_pos, button_size, col = button_color, z_layer = .ui)
+        text_pos := button_pos + v2{10, 5}
+        draw_text(text_pos, "Unlock", z_layer = .ui)
+
+        if can_afford {
+            mouse_pos := mouse_pos_in_world_space()
+            button_bounds := aabb_make(button_pos, button_size, .bottom_left)
+            if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
+                unlock_skill(system, skill)
+            }
+        }
+    }
+}
+
+render_active_skill_ui :: proc(skill: ^Skill) {
     text_pos := v2{-620, 300}
     draw_text(text_pos, fmt.tprintf("%s (Level %d)", skill.name, skill.level), scale = 1.5, z_layer = .ui)
 
@@ -1739,6 +1927,6 @@ render_skills_ui :: proc() {
     draw_text(xp_text_pos, fmt.tprintf("XP: %d / %d", skill.current_xp, skill.xp_to_next_level), z_layer = .ui)
 
     bonus_text_pos := xp_text_pos + v2{0, -20}
-    xp_boost := (calculate_xp_boost(skill) - 1.0) * 100
-    draw_text(bonus_text_pos, fmt.tprintf("XP Boost: +%.1f%%", xp_boost), z_layer = .ui)
+    bonus := calculate_skill_bonus(skill) * 100
+    draw_text(bonus_text_pos, fmt.tprintf("Bonus: +%.1f%%", bonus), z_layer = .ui)
 }
