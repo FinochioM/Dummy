@@ -10,6 +10,8 @@ import "core:math/linalg"
 import "core:math/ease"
 import "core:mem"
 import "core:slice"
+import "core:strings"
+import rand "core:math/rand"
 
 import sapp "sokol/app"
 import sg "sokol/gfx"
@@ -283,7 +285,7 @@ draw_rect_xform :: proc(
 	color_override:= v4{0,0,0,0},
 	z_layer := ZLayer.nil,
 ) {
-	draw_rect_projected(draw_frame.projection * draw_frame.camera_xform * xform, size, col, uv, img_id, color_override, z_layer=z_layer)
+	draw_rect_projected(draw_frame.coord_space.proj * draw_frame.coord_space.camera * xform, size, col, uv, img_id, color_override, z_layer=z_layer)
 }
 
 Vertex :: struct {
@@ -305,8 +307,7 @@ Draw_Frame :: struct {
 	quads: [MAX_QUADS]Quad,
 
     using reset: struct {
-        projection: Matrix4,
-        camera_xform: Matrix4,
+        coord_space: Coord_Space,
         quad_count: int,
     }
 }
@@ -314,9 +315,26 @@ draw_frame : Draw_Frame
 
 ZLayer :: enum u8{
     nil,
-    background1,
+    background,
     player,
+    foreground,
     ui,
+}
+
+Coord_Space :: struct {
+    proj: Matrix4,
+    camera: Matrix4,
+}
+
+set_draw_frame :: proc(coord: Coord_Space) {
+    draw_frame.coord_space = coord
+}
+
+@(deferred_out=set_draw_frame)
+push_coord_space :: proc(coord: Coord_Space) -> Coord_Space {
+    og := draw_frame.coord_space
+    draw_frame.coord_space = coord
+    return og
 }
 
 // below is the lower level draw rect stuff
@@ -408,7 +426,10 @@ draw_quad_projected :: proc(
 Image_Id :: enum {
 	nil,
 	player_move1,
-	background_1
+	background,
+	foreground,
+	dummy,
+	arrow,
 }
 
 Image :: struct {
@@ -578,7 +599,7 @@ pack_images_into_atlas :: proc() {
 //
 // :FONT
 //
-draw_text :: proc(pos: Vector2, text: string, scale:= 1.0) {
+draw_text :: proc(pos: Vector2, text: string, scale:= 1.0, z_layer := ZLayer.nil) {
 	using stbtt
 
 	x: f32
@@ -605,7 +626,7 @@ draw_text :: proc(pos: Vector2, text: string, scale:= 1.0) {
 		xform *= xform_translate(pos)
 		xform *= xform_scale(v2{auto_cast scale, auto_cast scale})
 		xform *= xform_translate(offset_to_render_at)
-		draw_rect_xform(xform, size, uv=uv, img_id=font.img_id)
+		draw_rect_xform(xform, size, uv=uv, img_id=font.img_id, z_layer = z_layer)
 
 		x += advance_x
 		y += -advance_y
@@ -701,9 +722,12 @@ update :: proc() {
 	}
 
 	if gs.ticks == 0 {
+	    // CREATE PLAYER
 		en := entity_create()
 		setup_player(en)
 		gs.player_handle = entity_to_handle(en^)
+
+		spawn_dummy(v2{300, -320})
 	}
 
 	for &en in gs.entities {
@@ -712,24 +736,42 @@ update :: proc() {
 
 	player := get_player()
 
+    // UPDATE ENTITIES
+	for &en in gs.entities {
+        if .allocated in en.flags {
+            #partial switch en.kind {
+                case .player: update_player(&en, f32(dt))
+                case .arrow: update_arrow(&en, f32(dt))
+            }
+        }
+	}
+
+
 	gs.ticks += 1
 }
 
 render :: proc() {
 	using linalg
 
-	draw_frame.projection = matrix_ortho3d_f32(window_w * -0.5, window_w * 0.5, window_h * -0.5, window_h * 0.5, -1, 1)
+	draw_frame.coord_space.proj = matrix_ortho3d_f32(window_w * -0.5, window_w * 0.5, window_h * -0.5, window_h * 0.5, -1, 1)
 
-	draw_frame.camera_xform = Matrix4(1)
-	draw_frame.camera_xform *= xform_scale(f32(window_h) / f32(game_res_h))
+	draw_frame.coord_space.camera = Matrix4(1)
+	draw_frame.coord_space.camera *= xform_scale(f32(window_h) / f32(game_res_h))
 
-    draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.background_1, z_layer = .background1)
+    draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.background, z_layer = .background)
+    draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.foreground, z_layer = .foreground)
 
 	for &en in gs.entities {
 		if .allocated in en.flags {
 			#partial switch en.kind {
 				case .player: {
-				    draw_player_at_pos(en, v2{-480, -330})
+				    draw_player_at_pos(en, v2{-440, -320})
+				}
+				case .dummy: {
+				    draw_dummy_at_pos(en)
+				}
+				case .arrow: {
+				    draw_arrow_at_pos(&en)
 				}
 			}
 		}
@@ -742,6 +784,8 @@ render :: proc() {
 
 	// draw_sprite(v2{-50, 50}, .crawler, xform=xform, pivot=.center_center)
 
+    draw_text(v2{-200, 100}, "Dummy", scale = 2.0, z_layer = .ui)
+
 	gs.ticks += 1
 }
 
@@ -752,8 +796,24 @@ draw_player_at_pos :: proc(en: Entity, pos: Vector2) {
     draw_sprite(pos, .player_move1, pivot=.bottom_center, xform = xform, z_layer = .player)
 }
 
+draw_dummy_at_pos :: proc(en: Entity){
+    xform := Matrix4(1)
+    xform *= xform_scale(v2{2.5,2.5})
+
+    draw_sprite(en.pos, .dummy, pivot = .bottom_center, xform = xform, z_layer = .player)
+}
+
+draw_arrow_at_pos :: proc(en: ^Entity){
+    xform := Matrix4(1)
+    xform *= xform_translate(en.pos)
+    xform *= xform_rotate(en.rotation)
+    xform *= xform_scale(v2{2.0, 2.0})
+
+    draw_sprite(v2{0,0}, .arrow, pivot = .center_center, xform = xform, z_layer = .player)
+}
+
 mouse_pos_in_world_space :: proc() -> Vector2 {
-	if draw_frame.projection == {} {
+	if draw_frame.coord_space.proj == {} {
 		log_error("no projection matrix set yet")
 	}
 
@@ -766,10 +826,87 @@ mouse_pos_in_world_space :: proc() -> Vector2 {
 
 	mouse_world :v4= v4{mouse_ndc.x, mouse_ndc.y, 0, 1}
 
-	mouse_world *= linalg.inverse(draw_frame.projection)
-	mouse_world *= linalg.inverse(draw_frame.camera_xform)
+	mouse_world *= linalg.inverse(draw_frame.coord_space.proj)
+	mouse_world *= linalg.inverse(draw_frame.coord_space.camera)
 
 	return mouse_world.xy
+}
+
+//
+// :dummies
+spawn_dummy :: proc(position: Vector2) -> ^Entity {
+    dummy := entity_create()
+    if dummy == nil do return nil
+
+    setup_dummy(dummy)
+    dummy.pos = position
+
+    return dummy
+}
+
+//
+// :player
+update_player :: proc(player: ^Entity, dt: f32) {
+    player.shoot_cooldown -= dt
+    if player.shoot_cooldown <= 0{
+        target := find_random_target()
+        if target != nil {
+            shoot_arrow(player, target)
+            player.shoot_cooldown = SHOOT_COOLDOWN
+        }
+    }
+}
+
+find_random_target :: proc() -> ^Entity{
+    targets: [dynamic]^Entity
+    defer delete(targets)
+
+    for &en in gs.entities{
+        if .allocated in en.flags && en.kind == .dummy{
+            append(&targets, &en)
+        }
+    }
+
+    if len(targets) > 0 {
+        return targets[rand.int_max(len(targets))]
+    }
+
+    return nil
+}
+
+//
+// :arrows
+Arrow_Data :: struct {
+    velocity: Vector2,
+    target_pos: Vector2,
+    lifetime: f32,
+}
+
+SHOOT_COOLDOWN :: 1.5
+ARROW_SPEED :: 1200.0
+ARROW_LIFETIME :: 2.0
+ACCURACY_VARIANCE :: 20.0
+GRAVITY_EFFECT :: 2000.0
+
+update_arrow :: proc(e: ^Entity, dt: f32) {
+    e.arrow_data.velocity.y -= GRAVITY_EFFECT * dt
+
+    e.pos += e.arrow_data.velocity * dt
+    if e.arrow_data.lifetime <= 0 {
+        entity_destroy(e)
+        return
+    }
+
+    angle := math.atan2(e.arrow_data.velocity.y, e.arrow_data.velocity.x)
+    e.rotation = math.to_degrees(angle)
+}
+
+shoot_arrow :: proc(player: ^Entity, target: ^Entity){
+    arrow := entity_create()
+    if arrow == nil do return
+
+    shoot_pos := v2{-440, -320} + v2{30, 40}
+    setup_arrow(arrow, shoot_pos, target.pos + v2{0, 15})
 }
 
 //
@@ -784,6 +921,8 @@ Entity_Flags :: enum {
 Entity_Kind :: enum {
 	nil,
 	player,
+	dummy,
+	arrow,
 }
 
 Entity :: struct {
@@ -791,12 +930,13 @@ Entity :: struct {
 	kind: Entity_Kind,
 	flags: bit_set[Entity_Flags],
 	pos: Vector2,
-	vel: Vector2,
-	acc: Vector2,
-
+    animations: Animation_Collection,
+    rotation: f32,
 	frame: struct{
 		input_axis: Vector2,
-	}
+	},
+	arrow_data: Arrow_Data,
+	shoot_cooldown: f32,
 }
 
 entity_data: [Entity_Kind]Entity
@@ -807,9 +947,10 @@ Entity_Handle :: struct {
 }
 
 setup_entity :: proc(e: ^Entity, kind: Entity_Kind){
-    switch kind{
+    #partial switch kind{
         case .nil: log_error("NO ENTITY PASSED IN SETUP")
         case .player: setup_player(e)
+        case .dummy: setup_dummy(e)
     }
 }
 
@@ -853,11 +994,46 @@ entity_destroy :: proc(entity: ^Entity) {
 	mem.set(entity, 0, size_of(Entity))
 }
 
+
+//
+// :setups
+
 setup_player :: proc(e: ^Entity) {
 	e.kind = .player
-	//e.flags |= { .physics }
+    e.flags |= { .allocated }
 }
 
+setup_dummy :: proc(e: ^Entity){
+    e.kind = .dummy
+    e.flags |= { .allocated }
+}
+
+setup_arrow :: proc(e: ^Entity, start_pos: Vector2, target_pos: Vector2){
+    e.kind = .arrow
+    e.flags |= {.allocated}
+    e.pos = start_pos
+
+    direction := target_pos - start_pos
+    distance := linalg.length(direction)
+    flight_time := distance / ARROW_SPEED
+
+    target_with_variance := target_pos + v2{
+        rand.float32_range(-ACCURACY_VARIANCE, ACCURACY_VARIANCE),
+        rand.float32_range(-ACCURACY_VARIANCE, ACCURACY_VARIANCE),
+    }
+
+    direction_to_target := target_with_variance - start_pos
+    direction_normalized := direction_to_target / linalg.length(direction_to_target)
+
+    base_velocity := direction_normalized * ARROW_SPEED
+    vertical_boost := GRAVITY_EFFECT * flight_time * 0.5
+
+    e.arrow_data = Arrow_Data {
+        velocity = base_velocity + v2{0, vertical_boost},
+        target_pos = target_pos,
+        lifetime = ARROW_LIFETIME,
+    }
+}
 
 //
 // :input
@@ -1060,4 +1236,231 @@ event :: proc "c" (event: ^sapp.Event) {
 			input_state.keys[event.key_code] += { .repeat }
 		}
 	}
+}
+
+//
+// :animations
+Animation_State :: enum {
+    Playing,
+    Paused,
+    Stopped,
+}
+
+Animation :: struct {
+    frames: []Image_Id,
+    current_frame: int,
+    frame_duration: f32,
+    frame_timer: f32,
+    state: Animation_State,
+    loops: bool,
+    name: string,
+    base_duration: f32,
+}
+
+Animation_Collection :: struct {
+    animations: map[string]Animation,
+    current_animation: string,
+}
+
+create_animation :: proc(frames: []Image_Id, frame_duration: f32, loops: bool, name: string) -> Animation {
+    frames_copy := make([]Image_Id, len(frames), context.allocator)
+    copy(frames_copy[:], frames)
+
+    return Animation{
+        frames = frames_copy,
+        current_frame = 0,
+        frame_duration = frame_duration,
+        base_duration = frame_duration,
+        frame_timer = 0,
+        state = .Stopped,
+        loops = loops,
+        name = name,
+    }
+}
+
+adjust_animation_to_speed :: proc(anim:  ^Animation, speed_multiplier: f32) {
+    if anim == nil do return
+
+    anim.frame_duration = anim.base_duration / speed_multiplier
+}
+
+update_animation :: proc(anim: ^Animation, delta_t: f32) -> bool {
+    if anim == nil {
+        return false
+    }
+
+    if anim.state != .Playing {
+        return false
+    }
+
+    anim.frame_timer += delta_t
+    if anim.frame_timer >= anim.frame_duration {
+        anim.frame_timer -= anim.frame_duration
+        anim.current_frame += 1
+
+        if anim.current_frame >= len(anim.frames) {
+            if anim.loops {
+                anim.current_frame = 0
+            } else {
+                anim.current_frame = len(anim.frames) - 1
+                anim.state = .Stopped
+                return true
+            }
+        }
+    }
+
+    return false
+}
+
+get_current_frame :: proc(anim: ^Animation) -> Image_Id {
+    if anim == nil {
+        return .nil
+    }
+
+    if len(anim.frames) == 0 {
+        return .nil
+    }
+
+    if anim.current_frame < 0 || anim.current_frame >= len(anim.frames) {
+        return .nil
+    }
+
+    frame := anim.frames[anim.current_frame]
+    return frame
+}
+
+draw_animated_sprite :: proc(pos: Vector2, anim: ^Animation, pivot := Pivot.bottom_left, xform := Matrix4(1), color_override := v4{0,0,0,0}){
+    if anim == nil do return
+    current_frame := get_current_frame(anim)
+    draw_sprite(pos, current_frame, pivot, xform, color_override)
+}
+
+play_animation :: proc(anim: ^Animation){
+    if anim == nil do return
+    anim.state = .Playing
+}
+
+pause_animation :: proc(anim: ^Animation){
+    if anim == nil do return
+    anim.state = .Paused
+}
+
+stop_animation :: proc(anim: ^Animation) {
+    if anim == nil do return
+    anim.state = .Stopped
+    anim.current_frame = 0
+    anim.frame_timer = 0
+}
+
+reset_animation :: proc(anim: ^Animation){
+    if anim == nil do return
+    anim.current_frame = 0
+    anim.frame_timer = 0
+}
+
+create_animation_collection :: proc() -> Animation_Collection {
+    return Animation_Collection{
+        animations = make(map[string]Animation),
+        current_animation = "",
+    }
+}
+
+add_animation :: proc(collection: ^Animation_Collection, animation: Animation){
+    collection.animations[animation.name] = animation
+}
+
+play_animation_by_name :: proc(collection: ^Animation_Collection, name: string) {
+    if collection == nil {
+        return
+    }
+
+    if collection.current_animation == name {
+        return
+    }
+
+    if collection.current_animation != "" {
+        if anim, ok := &collection.animations[collection.current_animation]; ok {
+            stop_animation(anim)
+        }
+    }
+
+    if anim, ok := &collection.animations[name]; ok {
+        collection.current_animation = name
+        play_animation(anim)
+    } else {
+        fmt.println("Animation not found:", name)
+    }
+}
+
+reset_and_play_animation :: proc(collection: ^Animation_Collection, name: string, speed: f32 = 1.0){
+    if collection == nil do return
+
+    if anim, ok := &collection.animations[name]; ok{
+        anim.current_frame = 0
+        anim.frame_timer = 0
+        anim.state = .Playing
+        anim.loops = false
+        adjust_animation_to_speed(anim, speed)
+
+        collection.current_animation = name
+    }
+}
+
+update_current_animation :: proc(collection: ^Animation_Collection, delta_t: f32) {
+    if collection.current_animation != "" {
+        if anim, ok := &collection.animations[collection.current_animation]; ok {
+            animation_finished := update_animation(anim, delta_t)
+            if animation_finished && collection.current_animation == "attack"{
+                play_animation_by_name(collection, "idle")
+            }
+        }
+    }
+}
+
+draw_current_animation :: proc(collection: ^Animation_Collection, pos: Vector2, pivot := Pivot.bottom_left, xform := Matrix4(1), color_override := v4{0,0,0,0}) {
+    if collection == nil || collection.current_animation == "" {
+        return
+    }
+    if anim, ok := &collection.animations[collection.current_animation]; ok {
+        draw_animated_sprite(pos, anim, pivot, xform, color_override)
+    }
+}
+
+load_animation_frames :: proc(directory: string, prefix: string) -> ([]Image_Id, bool) {
+    frames: [dynamic]Image_Id
+    frames.allocator = context.temp_allocator
+
+    dir_handle, err := os.open(directory)
+    if err != 0 {
+        log_error("Failed to open directory:", directory)
+        return nil, false
+    }
+    defer os.close(dir_handle)
+
+    files, read_err := os.read_dir(dir_handle, 0)
+    if read_err != 0 {
+        log_error("Failed to read directory:", directory)
+        return nil, false
+    }
+
+    for file in files {
+        if !strings.has_prefix(file.name, prefix) do continue
+        if !strings.has_suffix(file.name, ".png") do continue
+
+        frame_name := strings.concatenate({prefix, "_", strings.trim_suffix(file.name, ".png")})
+
+        frame_id: Image_Id
+        switch frame_name {
+            case: continue
+        }
+
+        append(&frames, frame_id)
+    }
+
+    if len(frames) == 0 {
+        log_error("No frames found for animation:", prefix)
+        return nil, false
+    }
+
+    return frames[:], true
 }
