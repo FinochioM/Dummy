@@ -26,6 +26,6 @@ Work on Dummies:
 - When they die, they get destroyed.
 
 Work on main character:
-- Position him on the bottom left of the screen, make him static. DONE
-- Make the character shoot automatically every 1.5 seconds.
-- Spawn an arrow when the shoot is active, arrows have to be treated as entities.
+- Position him on the bottom left of the screen, make him static. DONE.
+- Make the character shoot automatically every 1.5 seconds. DONE.
+- Spawn an arrow when the shoot is active, arrows have to be treated as entities. DONE.

@@ -834,6 +834,9 @@ mouse_pos_in_world_space :: proc() -> Vector2 {
 
 //
 // :dummies
+DUMMY_MAX_HEALTH :: 100.0
+ARROW_DAMAGE :: 20.0
+
 spawn_dummy :: proc(position: Vector2) -> ^Entity {
     dummy := entity_create()
     if dummy == nil do return nil
@@ -891,10 +894,31 @@ GRAVITY_EFFECT :: 2000.0
 update_arrow :: proc(e: ^Entity, dt: f32) {
     e.arrow_data.velocity.y -= GRAVITY_EFFECT * dt
 
+    old_pos := e.pos
     e.pos += e.arrow_data.velocity * dt
+
+    e.arrow_data.lifetime -= dt
     if e.arrow_data.lifetime <= 0 {
         entity_destroy(e)
         return
+    }
+
+    arrow_size := v2{10, 1}
+    arrow_aabb := aabb_make(e.pos, arrow_size, .center_center)
+
+    for &target in gs.entities {
+        if .allocated not_in target.flags || target.kind != .dummy {
+            continue
+        }
+
+        dummy_size := v2{32, 32}
+        target.aabb = aabb_make(target.pos, dummy_size, .bottom_center)
+
+        if aabb_collide(arrow_aabb, target.aabb){
+            damage_entity(&target, ARROW_DAMAGE)
+            entity_destroy(e)
+            return
+        }
     }
 
     angle := math.atan2(e.arrow_data.velocity.y, e.arrow_data.velocity.x)
@@ -937,6 +961,9 @@ Entity :: struct {
 	},
 	arrow_data: Arrow_Data,
 	shoot_cooldown: f32,
+	health: f32,
+	max_health: f32,
+	aabb: Vector4,
 }
 
 entity_data: [Entity_Kind]Entity
@@ -944,6 +971,14 @@ entity_data: [Entity_Kind]Entity
 Entity_Handle :: struct {
     id: u64,
     index: int,
+}
+
+damage_entity :: proc(e: ^Entity, amount: f32){
+    e.health -= amount
+
+    if e.health <= 0 {
+        entity_destroy(e)
+    }
 }
 
 setup_entity :: proc(e: ^Entity, kind: Entity_Kind){
@@ -1006,6 +1041,11 @@ setup_player :: proc(e: ^Entity) {
 setup_dummy :: proc(e: ^Entity){
     e.kind = .dummy
     e.flags |= { .allocated }
+    e.health = DUMMY_MAX_HEALTH
+    e.max_health = DUMMY_MAX_HEALTH
+
+    dummy_size := v2{32, 32}
+    e.aabb = aabb_make(e.pos, dummy_size, .bottom_center)
 }
 
 setup_arrow :: proc(e: ^Entity, start_pos: Vector2, target_pos: Vector2){
@@ -1463,4 +1503,24 @@ load_animation_frames :: proc(directory: string, prefix: string) -> ([]Image_Id,
     }
 
     return frames[:], true
+}
+
+//
+// :collision
+
+AABB :: Vector4
+
+aabb_make :: proc(pos: Vector2, size: Vector2, pivot: Pivot) -> Vector4{
+    half_size := size * 0.5
+
+    offset := -scale_from_pivot(pivot) * size
+
+    min := pos + offset
+    max := min + size
+
+    return Vector4{min.x, min.y, max.x, max.y}
+}
+
+aabb_collide :: proc(a, b: Vector4) ->bool {
+    return !(a.z < b.x || a.x > b.z || a.w < b.y || a.y > b.w)
 }
