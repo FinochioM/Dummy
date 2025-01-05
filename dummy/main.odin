@@ -41,7 +41,7 @@ main :: proc() {
 		event_cb = event,
 		width = window_w,
 		height = window_h,
-		window_title = "epic hot sauce",
+		window_title = "Dummy",
 		icon = { sokol_default = true },
 		logger = { func = slog.func },
 	})
@@ -170,6 +170,7 @@ frame :: proc "c" () {
 	sg.commit()
 
 	reset_input_state_for_next_frame(&app_state.input_state)
+    free_all(context.temp_allocator)
 }
 
 cleanup :: proc "c" () {
@@ -190,6 +191,8 @@ v4 :: Vector4
 Matrix4 :: linalg.Matrix4f32;
 
 COLOR_WHITE :: Vector4 {1,1,1,1}
+COLOR_BLACK :: Vector4{0,0,0,1}
+COLOR_RED :: Vector4{1,0,0,1}
 
 // might do something with these later on
 loggie :: fmt.println // log is already used........
@@ -263,6 +266,17 @@ draw_sprite :: proc(pos: Vector2, img_id: Image_Id, pivot:= Pivot.bottom_left, x
 	draw_rect_xform(xform0, size, img_id=img_id, color_override=color_override, z_layer=z_layer)
 }
 
+draw_sprite_in_rect :: proc(img_id: Image_Id, pos: Vector2, size: Vector2, xform := Matrix4(1), col := COLOR_WHITE, color_override := v4{0,0,0,0}, z_layer := ZLayer.nil){
+    image := images[img_id]
+    img_size := v2{auto_cast image.width, auto_cast image.height}
+
+    pos0 := pos
+    pos0.x += (size.x - img_size.x) * 0.5
+    pos0.y += (size.y - img_size.y) * 0.5
+
+    draw_rect_aabb(pos0, img_size, col = col, img_id = img_id, color_override = color_override, z_layer = z_layer)
+}
+
 draw_rect_aabb :: proc(
 	pos: Vector2,
 	size: Vector2,
@@ -309,6 +323,7 @@ Draw_Frame :: struct {
     using reset: struct {
         coord_space: Coord_Space,
         quad_count: int,
+        flip_v: bool,
     }
 }
 draw_frame : Draw_Frame
@@ -358,6 +373,10 @@ draw_rect_projected :: proc(
 	if uv == DEFAULT_UV {
 		uv0 = images[img_id].atlas_uvs
 	}
+
+    if draw_frame.flip_v {
+        uv0.y, uv0.w = uv0.w, uv0.y
+    }
 
 	tex_index :u8= images[img_id].tex_index
 	if img_id == .nil {
@@ -726,9 +745,12 @@ update :: proc() {
 		en := entity_create()
 		setup_player(en)
 		gs.player_handle = entity_to_handle(en^)
-
-		spawn_dummy(v2{300, -320})
 	}
+
+	draw_frame.coord_space.proj = matrix_ortho3d_f32(window_w * -0.5, window_w * 0.5, window_h * -0.5, window_h * 0.5, -1, 1)
+
+	draw_frame.coord_space.camera = Matrix4(1)
+	draw_frame.coord_space.camera *= xform_scale(f32(window_h) / f32(game_res_h))
 
 	for &en in gs.entities {
 		en.frame = {}
@@ -746,6 +768,7 @@ update :: proc() {
         }
 	}
 
+	check_spawn_button()
 
 	gs.ticks += 1
 }
@@ -753,13 +776,22 @@ update :: proc() {
 render :: proc() {
 	using linalg
 
-	draw_frame.coord_space.proj = matrix_ortho3d_f32(window_w * -0.5, window_w * 0.5, window_h * -0.5, window_h * 0.5, -1, 1)
-
-	draw_frame.coord_space.camera = Matrix4(1)
-	draw_frame.coord_space.camera *= xform_scale(f32(window_h) / f32(game_res_h))
-
     draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.background, z_layer = .background)
     draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.foreground, z_layer = .foreground)
+
+    if !has_active_dummy() {
+        button_pos := v2{-BUTTON_WIDTH / 2, 200}
+
+        draw_rect_aabb(
+            button_pos,
+            v2{BUTTON_WIDTH, BUTTON_HEIGHT},
+            col = v4{0.2, 0.2, 0.2, 1},
+            z_layer = .ui,
+        )
+
+        text_pos := button_pos + v2{BUTTON_WIDTH / 2 - 70, BUTTON_HEIGHT / 2 - 10}
+        draw_text(text_pos, "Spawn Dummy", scale = 2.0, z_layer = .ui)
+    }
 
 	for &en in gs.entities {
 		if .allocated in en.flags {
@@ -776,13 +808,6 @@ render :: proc() {
 			}
 		}
 	}
-
-	// alpha :f32= auto_cast math.mod(seconds_since_init() * 0.2, 1.0)
-	// xform := xform_rotate(alpha * 360.0)
-	// xform *= xform_scale(1.0 + 1 * sine_breathe(alpha))
-	// draw_sprite(v2{}, .player, pivot=.bottom_center)
-
-	// draw_sprite(v2{-50, 50}, .crawler, xform=xform, pivot=.center_center)
 
     draw_text(v2{-200, 100}, "Dummy", scale = 2.0, z_layer = .ui)
 
@@ -976,6 +1001,7 @@ Entity :: struct {
 	health: f32,
 	max_health: f32,
 	aabb: Vector4,
+	img_id: Image_Id,
 }
 
 entity_data: [Entity_Kind]Entity
@@ -995,9 +1021,13 @@ damage_entity :: proc(e: ^Entity, amount: f32){
 
 setup_entity :: proc(e: ^Entity, kind: Entity_Kind){
     #partial switch kind{
-        case .nil: log_error("NO ENTITY PASSED IN SETUP")
+        case .nil: return
         case .player: setup_player(e)
         case .dummy: setup_dummy(e)
+        case .arrow: {
+            e.kind = .arrow
+            e.flags |= {.allocated}
+        }
     }
 }
 
@@ -1259,6 +1289,7 @@ key_repeat :: proc(code: Key_Code) -> bool {
 }
 
 event :: proc "c" (event: ^sapp.Event) {
+    context = runtime.default_context()
 	input_state := &app_state.input_state
 
 	#partial switch event.type {
@@ -1266,14 +1297,17 @@ event :: proc "c" (event: ^sapp.Event) {
 		if .down in input_state.keys[map_sokol_mouse_button(event.mouse_button)] {
 			input_state.keys[map_sokol_mouse_button(event.mouse_button)] -= { .down }
 			input_state.keys[map_sokol_mouse_button(event.mouse_button)] += { .just_released }
+			fmt.println("Mouse UP at:", event.mouse_x, event.mouse_y)
 		}
 		case .MOUSE_DOWN:
 		if !(.down in input_state.keys[map_sokol_mouse_button(event.mouse_button)]) {
 			input_state.keys[map_sokol_mouse_button(event.mouse_button)] += { .down, .just_pressed }
+			fmt.println("Mouse DOWN at:", event.mouse_x, event.mouse_y)
 		}
 
 		case .MOUSE_MOVE:
 		input_state.mouse_x = event.mouse_x
+		input_state.mouse_y = event.mouse_y
 
 		case .KEY_UP:
 		if .down in input_state.keys[event.key_code] {
@@ -1535,4 +1569,55 @@ aabb_make :: proc(pos: Vector2, size: Vector2, pivot: Pivot) -> Vector4{
 
 aabb_collide :: proc(a, b: Vector4) ->bool {
     return !(a.z < b.x || a.x > b.z || a.w < b.y || a.y > b.w)
+}
+
+aabb_contains :: proc(aabb: Vector4, p: Vector2) -> bool {
+    return (p.x >= aabb.x) && (p.x <= aabb.z) &&
+           (p.y >= aabb.y) && (p.y <= aabb.w)
+}
+
+//
+// :ui & control
+
+BUTTON_WIDTH :: 200.0
+BUTTON_HEIGHT :: 50.0
+
+has_active_dummy :: proc() -> bool {
+    for &en in gs.entities {
+        if .allocated in en.flags && en.kind == .dummy {
+            return true
+        }
+    }
+    return false
+}
+
+check_spawn_button :: proc() {
+    if has_active_dummy() {
+        return
+    }
+
+    if draw_frame.coord_space.proj == {} {
+        return
+    }
+
+    if key_just_pressed(.LEFT_MOUSE) {
+        fmt.println("Left mouse just pressed")
+        fmt.println("Raw mouse pos:", app_state.input_state.mouse_x, app_state.input_state.mouse_y)
+        world_pos := mouse_pos_in_world_space()
+        fmt.println("World pos:", world_pos)
+    }
+
+    button_pos := v2{-BUTTON_WIDTH/2, 200}
+    mouse_pos := mouse_pos_in_world_space()
+
+    button_bounds := v4{
+        button_pos.x,
+        button_pos.y,
+        button_pos.x + BUTTON_WIDTH,
+        button_pos.y + BUTTON_HEIGHT,
+    }
+
+    if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
+        spawn_dummy(v2{300, -320})
+    }
 }
