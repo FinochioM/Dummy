@@ -65,23 +65,21 @@ init :: proc "c" () {
 	// :init
 	gs = &app_state.game
 
+    gs.skills_system = init_skills_system()
+
     for &e, kind in entity_data {
         setup_entity(&e, kind)
     }
 
-	// make the vertex buffer
 	app_state.bind.vertex_buffers[0] = sg.make_buffer({
 		usage = .DYNAMIC,
 		size = size_of(Quad) * len(draw_frame.quads),
 	})
 
-	// make & fill the index buffer
 	index_buffer_count :: MAX_QUADS*6
 	indices : [index_buffer_count]u16;
 	i := 0;
 	for i < index_buffer_count {
-		// vertex offset pattern to draw a quad
-		// { 0, 1, 2,  0, 2, 3 }
 		indices[i + 0] = auto_cast ((i/6)*4 + 0)
 		indices[i + 1] = auto_cast ((i/6)*4 + 1)
 		indices[i + 2] = auto_cast ((i/6)*4 + 2)
@@ -95,10 +93,8 @@ init :: proc "c" () {
 		data = { ptr = &indices, size = size_of(indices) },
 	})
 
-	// image stuff
 	app_state.bind.samplers[SMP_default_sampler] = sg.make_sampler({})
 
-	// setup pipeline
 	pipeline_desc : sg.Pipeline_Desc = {
 		shader = sg.make_shader(quad_shader_desc(sg.query_backend())),
 		index_type = .UINT16,
@@ -124,7 +120,6 @@ init :: proc "c" () {
 	pipeline_desc.colors[0] = { blend = blend_state }
 	app_state.pip = sg.make_pipeline(pipeline_desc)
 
-	// default pass action
 	app_state.pass_action = {
 		colors = {
 			0 = { load_action = .CLEAR, clear_value = { 0, 0, 0, 1 }},
@@ -715,6 +710,7 @@ Game_State :: struct {
 	entities: [128]Entity,
 	latest_entity_id: u64,
 	player_handle: Entity_Handle,
+	skills_system: Skills_System,
 }
 gs: ^Game_State
 
@@ -807,6 +803,10 @@ render :: proc() {
 				}
 			}
 		}
+	}
+
+	if gs.skills_system.is_unlocked {
+	   render_skills_ui()
 	}
 
     draw_text(v2{-200, 100}, "Dummy", scale = 2.0, z_layer = .ui)
@@ -1068,6 +1068,15 @@ entity_create :: proc() -> ^Entity {
 }
 
 entity_destroy :: proc(entity: ^Entity) {
+    if entity.kind == .dummy {
+        gs.skills_system.dummies_killed += 1
+        check_skills_unlock(&gs.skills_system)
+
+        if gs.skills_system.is_unlocked {
+            add_xp_to_active_skill(&gs.skills_system, 50)
+        }
+    }
+
 	mem.set(entity, 0, size_of(Entity))
 }
 
@@ -1620,4 +1629,116 @@ check_spawn_button :: proc() {
     if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
         spawn_dummy(v2{300, -320})
     }
+}
+
+//
+// :skills
+Skill_Type :: enum {
+    nil,
+    xp_boost,
+}
+
+Skill :: struct {
+    type: Skill_Type,
+    name: string,
+    level: int,
+    current_xp: int,
+    xp_to_next_level: int,
+    description: string,
+    is_unlocked: bool,
+}
+
+Skills_System :: struct {
+    skills: [dynamic]Skill,
+    active_skill: ^Skill,
+    dummies_killed: int,
+    is_unlocked: bool,
+}
+
+init_skills_system :: proc() -> Skills_System {
+    system := Skills_System{
+        skills = make([dynamic]Skill),
+        active_skill = nil,
+        dummies_killed = 0,
+        is_unlocked = false,
+    }
+
+    xp_boost_skill := Skill {
+        type = .xp_boost,
+        name = "Experience Mastery",
+        level = 1,
+        current_xp = 0,
+        xp_to_next_level = 100,
+        description = "Increases experience gained from destroying dummies",
+        is_unlocked = false,
+    }
+
+    append(&system.skills, xp_boost_skill)
+
+    return system
+}
+
+calculate_xp_boost :: proc(skill: ^Skill) -> f32{
+    if skill == nil || skill.type != .xp_boost {
+        return 1.0
+    }
+
+    base_boost := 0.05
+    level_boost := 0.05 * f32(skill.level - 1)
+    return 1.0 + f32(base_boost) + f32(level_boost)
+}
+
+add_xp_to_active_skill :: proc(system: ^Skills_System, base_xp: int) {
+    if system.active_skill == nil {
+        return
+    }
+
+    xp_multiplier := calculate_xp_boost(system.active_skill)
+    total_xp := int(f32(base_xp) * xp_multiplier)
+
+    system.active_skill.current_xp += total_xp
+
+    for system.active_skill.current_xp >= system.active_skill.xp_to_next_level {
+        system.active_skill.current_xp -= system.active_skill.xp_to_next_level
+        system.active_skill.level += 1
+        system.active_skill.xp_to_next_level = int(f32(system.active_skill.xp_to_next_level) * 1.5)
+    }
+}
+
+check_skills_unlock :: proc(system: ^Skills_System) {
+    if system.is_unlocked {
+        return
+    }
+
+    if system.dummies_killed >= 3 {
+        system.is_unlocked = true
+        system.skills[0].is_unlocked = true
+        system.active_skill = &system.skills[0]
+    }
+}
+
+render_skills_ui :: proc() {
+    skill := gs.skills_system.active_skill
+    if skill == nil {
+        return
+    }
+
+    text_pos := v2{-620, 300}
+    draw_text(text_pos, fmt.tprintf("%s (Level %d)", skill.name, skill.level), scale = 1.5, z_layer = .ui)
+
+    bar_width := 200.0
+    bar_height := 20.0
+    bar_pos := text_pos + v2{0, -30}
+
+    draw_rect_aabb(bar_pos, v2{auto_cast bar_width, auto_cast bar_height}, col = v4{0.2, 0.2, 0.2, 1}, z_layer = .ui)
+
+    xp_ratio := f32(skill.current_xp) / f32(skill.xp_to_next_level)
+    draw_rect_aabb(bar_pos, v2{auto_cast bar_width * xp_ratio, auto_cast bar_height}, col = v4{0, 0.8, 0.2, 1}, z_layer = .ui)
+
+    xp_text_pos := bar_pos + v2{0, -20}
+    draw_text(xp_text_pos, fmt.tprintf("XP: %d / %d", skill.current_xp, skill.xp_to_next_level), z_layer = .ui)
+
+    bonus_text_pos := xp_text_pos + v2{0, -20}
+    xp_boost := (calculate_xp_boost(skill) - 1.0) * 100
+    draw_text(bonus_text_pos, fmt.tprintf("XP Boost: +%.1f%%", xp_boost), z_layer = .ui)
 }
