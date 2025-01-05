@@ -800,7 +800,19 @@ draw_dummy_at_pos :: proc(en: Entity){
     xform := Matrix4(1)
     xform *= xform_scale(v2{2.5,2.5})
 
-    draw_sprite(en.pos, .dummy, pivot = .bottom_center, xform = xform, z_layer = .player)
+    health_percent := en.health / en.max_health
+
+    draw_sprite(en.pos, .dummy, pivot = .bottom_center, xform = xform,z_layer = .player)
+    if en.health < en.max_health {
+        bar_width := 64.0
+        bar_height := 8.0
+        health_ratio := en.health / en.max_health
+
+        bar_pos := en.pos + v2{auto_cast -bar_width / 2, 100}
+        draw_rect_aabb(bar_pos, v2{auto_cast bar_width, auto_cast bar_height}, col=v4{1,0,0,1}, z_layer = .ui)
+
+        draw_rect_aabb(bar_pos, v2{auto_cast bar_width * health_ratio, auto_cast bar_height}, col=v4{0,1,0,1}, z_layer = .ui)
+    }
 }
 
 draw_arrow_at_pos :: proc(en: ^Entity){
