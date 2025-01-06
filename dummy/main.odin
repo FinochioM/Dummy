@@ -11,7 +11,9 @@ import "core:math/ease"
 import "core:mem"
 import "core:slice"
 import "core:strings"
+import time "core:time"
 import rand "core:math/rand"
+import json "core:encoding/json"
 
 import sapp "sokol/app"
 import sg "sokol/gfx"
@@ -64,6 +66,8 @@ init :: proc "c" () {
 
 	// :init
 	gs = &app_state.game
+   gs.ui_hot_reload = init_ui_hot_reload()
+   gs.ui_config = gs.ui_hot_reload.config
 
     gs.skills_system = init_skills_system()
     gs.quests_system = init_quests_system()
@@ -190,8 +194,7 @@ COLOR_WHITE :: Vector4 {1,1,1,1}
 COLOR_BLACK :: Vector4{0,0,0,1}
 COLOR_RED :: Vector4{1,0,0,1}
 
-// might do something with these later on
-loggie :: fmt.println // log is already used........
+loggie :: fmt.println
 log_error :: fmt.println
 log_warning :: fmt.println
 
@@ -226,6 +229,7 @@ Pivot :: enum {
 	top_center,
 	top_right,
 }
+
 scale_from_pivot :: proc(pivot: Pivot) -> Vector2 {
 	switch pivot {
 		case .bottom_left: return v2{0.0, 0.0}
@@ -245,10 +249,35 @@ sine_breathe :: proc(p: $T) -> T where intrinsics.type_is_float(T) {
 	return (math.sin((p - .25) * 2.0 * math.PI) / 2.0) + 0.5
 }
 
+animate_to_target_f32 :: proc(current: ^f32, target: f32, dt: f32, rate: f32 = 10.0) {
+    diff := target - current^
+    current^ += diff * min(1.0, dt * rate)
+}
+
+interpolate :: proc(a, b: $T, t: f32) -> T where intrinsics.type_is_float(T) {
+    return a + (b - a) * t
+}
+
+// UI Utilities
+get_skill_button_pos :: proc() -> Vector2 {
+    return Vector2{0, game_res_h * 0.45}
+}
+
+get_menu_position :: proc(alpha: f32) -> Vector2 {
+    base_pos := Vector2{0, game_res_h * 0.3}
+    offset := Vector2{0, UI.MENU_PADDING}
+    return base_pos + offset * alpha
+}
+
+is_point_in_rect :: proc(point, pos, size: Vector2) -> bool {
+    return point.x >= pos.x - size.x/2 &&
+           point.x <= pos.x + size.x/2 &&
+           point.y >= pos.y - size.y/2 &&
+           point.y <= pos.y + size.y/2
+}
+
 //
 // :RENDER STUFF
-//
-// API ordered highest -> lowest level
 
 draw_sprite :: proc(pos: Vector2, img_id: Image_Id, pivot:= Pivot.bottom_left, xform := Matrix4(1), color_override:= v4{0,0,0,0}, z_layer := ZLayer.nil) {
 	image := images[img_id]
@@ -271,6 +300,18 @@ draw_sprite_in_rect :: proc(img_id: Image_Id, pos: Vector2, size: Vector2, xform
     pos0.y += (size.y - img_size.y) * 0.5
 
     draw_rect_aabb(pos0, img_size, col = col, img_id = img_id, color_override = color_override, z_layer = z_layer)
+}
+
+draw_rect_aabb_actually :: proc(
+	aabb: AABB,
+	col: Vector4=COLOR_WHITE,
+	uv: Vector4=DEFAULT_UV,
+	img_id: Image_Id=.nil,
+	color_override:= v4{0,0,0,0},
+	z_layer:=ZLayer.nil,
+) {
+	xform := linalg.matrix4_translate(v3{aabb.x, aabb.y, 0})
+	draw_rect_xform(xform, aabb_size(aabb), col, uv, img_id, color_override, z_layer=z_layer)
 }
 
 draw_rect_aabb :: proc(
@@ -320,6 +361,7 @@ Draw_Frame :: struct {
         coord_space: Coord_Space,
         quad_count: int,
         flip_v: bool,
+        active_z_layer: ZLayer,
     }
 }
 draw_frame : Draw_Frame
@@ -337,15 +379,25 @@ Coord_Space :: struct {
     camera: Matrix4,
 }
 
-set_draw_frame :: proc(coord: Coord_Space) {
-    draw_frame.coord_space = coord
+set_coord_space :: proc(coord: Coord_Space) {
+	draw_frame.coord_space = coord
 }
 
-@(deferred_out=set_draw_frame)
+@(deferred_out=set_coord_space)
 push_coord_space :: proc(coord: Coord_Space) -> Coord_Space {
     og := draw_frame.coord_space
     draw_frame.coord_space = coord
     return og
+}
+
+set_z_layer :: proc(zlayer: ZLayer) {
+	draw_frame.active_z_layer = zlayer
+}
+@(deferred_out=set_z_layer)
+push_z_layer :: proc(zlayer: ZLayer) -> ZLayer {
+	og := draw_frame.active_z_layer
+	draw_frame.active_z_layer = zlayer
+	return og
 }
 
 // below is the lower level draw rect stuff
@@ -376,7 +428,7 @@ draw_rect_projected :: proc(
 
 	tex_index :u8= images[img_id].tex_index
 	if img_id == .nil {
-		tex_index = 255 // bypasses texture sampling
+		tex_index = 255
 	}
 
 	draw_quad_projected(world_to_clip, {bl, tl, tr, br}, {col, col, col, col}, {uv0.xy, uv0.xw, uv0.zw, uv0.zy}, {tex_index,tex_index,tex_index,tex_index}, {color_override,color_override,color_override,color_override}, z_layer = z_layer)
@@ -399,6 +451,11 @@ draw_quad_projected :: proc(
 	if draw_frame.quad_count >= MAX_QUADS {
 		log_error("max quads reached")
 		return
+	}
+
+	z_layer0 := z_layer
+	if z_layer0 == .nil {
+		z_layer0 = draw_frame.active_z_layer
 	}
 
 	verts := cast(^[4]Vertex)&draw_frame.quads[draw_frame.quad_count];
@@ -429,10 +486,10 @@ draw_quad_projected :: proc(
 	verts[2].color_override = color_overrides[2]
 	verts[3].color_override = color_overrides[3]
 
-	verts[0].z_layer = u8(z_layer)
-	verts[1].z_layer = u8(z_layer)
-	verts[2].z_layer = u8(z_layer)
-	verts[3].z_layer = u8(z_layer)
+	verts[0].z_layer = u8(z_layer0)
+	verts[1].z_layer = u8(z_layer0)
+	verts[2].z_layer = u8(z_layer0)
+	verts[3].z_layer = u8(z_layer0)
 }
 
 //
@@ -445,6 +502,15 @@ Image_Id :: enum {
 	foreground,
 	dummy,
 	arrow,
+	skills_button,
+	skills_panel_bg,
+	skills_panel_bg1,
+	skills_icon_frame,
+	tooltip_bg,
+    next_skill_panel_bg,
+    next_skill_button_bg,
+    radio_selected,
+    radio_unselected,
 }
 
 Image :: struct {
@@ -614,12 +680,43 @@ pack_images_into_atlas :: proc() {
 //
 // :FONT
 //
-draw_text :: proc(pos: Vector2, text: string, scale:= 1.0, z_layer := ZLayer.nil) {
+draw_text :: proc(pos: Vector2, text: string, col:=COLOR_WHITE, scale:= 1.0, pivot:=Pivot.bottom_left, z_layer:= ZLayer.nil) {
 	using stbtt
+
+	push_z_layer(z_layer)
+
+	total_size : v2
+	for char, i in text {
+
+		advance_x: f32
+		advance_y: f32
+		q: aligned_quad
+		GetBakedQuad(&font.char_data[0], font_bitmap_w, font_bitmap_h, cast(i32)char - 32, &advance_x, &advance_y, &q, false)
+
+		size := v2{ abs(q.x0 - q.x1), abs(q.y0 - q.y1) }
+
+		bottom_left := v2{ q.x0, -q.y1 }
+		top_right := v2{ q.x1, -q.y0 }
+		assert(bottom_left + size == top_right)
+
+		if i == len(text)-1 {
+			total_size.x += size.x
+		} else {
+			total_size.x += advance_x
+		}
+
+		total_size.y = max(total_size.y, top_right.y)
+	}
+
+	pivot_offset := total_size * -scale_from_pivot(pivot)
+
+	debug_text := false
+	if debug_text {
+		draw_rect_aabb(pos + pivot_offset, total_size, col=COLOR_BLACK)
+	}
 
 	x: f32
 	y: f32
-
 	for char in text {
 
 		advance_x: f32
@@ -635,13 +732,21 @@ draw_text :: proc(pos: Vector2, text: string, scale:= 1.0, z_layer := ZLayer.nil
 
 		offset_to_render_at := v2{x,y} + bottom_left
 
-		uv := v4{ q.s0, q.t1, q.s1, q.t0 }
+		offset_to_render_at += pivot_offset
+
+		uv := v4{ q.s0, q.t1,
+							q.s1, q.t0 }
 
 		xform := Matrix4(1)
 		xform *= xform_translate(pos)
 		xform *= xform_scale(v2{auto_cast scale, auto_cast scale})
 		xform *= xform_translate(offset_to_render_at)
-		draw_rect_xform(xform, size, uv=uv, img_id=font.img_id, z_layer = z_layer)
+
+		if debug_text {
+			draw_rect_xform(xform, size, col=v4{1,1,1,0.8})
+		}
+
+		draw_rect_xform(xform, size, uv=uv, img_id=font.img_id, col=col)
 
 		x += advance_x
 		y += -advance_y
@@ -711,8 +816,19 @@ Game_State :: struct {
 	entities: [128]Entity,
 	latest_entity_id: u64,
 	player_handle: Entity_Handle,
+	ui_config: UI_Config,
+	ui_hot_reload: UI_Hot_Reload,
 	skills_system: Skills_System,
     quests_system: Quests_System,
+    ui: struct {
+        skills_button_scale: f32,
+        skills_menu_alpha: f32,
+        skills_tooltip_alpha: f32,
+        skills_hover_tooltip_active: bool,
+        skills_hover_tooltip_skill: ^Skill,
+        skills_menu_pos: Vector2,
+        last_mouse_pos: Vector2,
+    },
 }
 gs: ^Game_State
 
@@ -766,8 +882,12 @@ update :: proc() {
         }
 	}
 
+    check_and_reload(&gs.ui_hot_reload)
+    gs.ui_config = gs.ui_hot_reload.config
+
 	check_spawn_button()
 	update_quests_system(&gs.quests_system, f32(dt))
+	update_ui_state(gs, f32(dt))
 
 	gs.ticks += 1
 }
@@ -819,7 +939,7 @@ render :: proc() {
         }
     }
 
-    draw_text(v2{-200, 100}, "Dummy", scale = 2.0, z_layer = .ui)
+    //draw_text(v2{-200, 100}, "Dummy", scale = 2.0, z_layer = .ui)
 
 	gs.ticks += 1
 }
@@ -859,6 +979,18 @@ draw_arrow_at_pos :: proc(en: ^Entity){
     draw_sprite(v2{0,0}, .arrow, pivot = .center_center, xform = xform, z_layer = .player)
 }
 
+mouse_pos_in_screen_space :: proc() -> Vector2 {
+	if draw_frame.coord_space.proj == {} {
+		log_error("no projection matrix set yet")
+	}
+
+	mouse := v2{app_state.input_state.mouse_x, app_state.input_state.mouse_y}
+	x := mouse.x / f32(window_w);
+	y := mouse.y / f32(window_h) - 1.0;
+	y *= -1
+	return v2{x * game_res_w, y * game_res_h}
+}
+
 mouse_pos_in_world_space :: proc() -> Vector2 {
 	if draw_frame.coord_space.proj == {} {
 		log_error("no projection matrix set yet")
@@ -882,7 +1014,7 @@ mouse_pos_in_world_space :: proc() -> Vector2 {
 //
 // :dummies
 DUMMY_MAX_HEALTH :: 100.0
-ARROW_DAMAGE :: 20.0
+ARROW_DAMAGE :: 200.0
 
 spawn_dummy :: proc(position: Vector2) -> ^Entity {
     dummy := entity_create()
@@ -962,7 +1094,7 @@ update_arrow :: proc(e: ^Entity, dt: f32) {
     }
 
     arrow_size := v2{10, 1}
-    arrow_aabb := aabb_make(e.pos, arrow_size, .center_center)
+    arrow_aabb := aabb_make(e.pos, arrow_size, Pivot.center_center)
 
     for &target in gs.entities {
         if .allocated not_in target.flags || target.kind != .dummy {
@@ -970,7 +1102,7 @@ update_arrow :: proc(e: ^Entity, dt: f32) {
         }
 
         dummy_size := v2{32, 32}
-        target.aabb = aabb_make(target.pos, dummy_size, .bottom_center)
+        target.aabb = aabb_make(target.pos, dummy_size, Pivot.bottom_center)
 
         if aabb_collide(arrow_aabb, target.aabb){
             damage_entity(&target, ARROW_DAMAGE)
@@ -1137,7 +1269,7 @@ setup_dummy :: proc(e: ^Entity){
     e.max_health = DUMMY_MAX_HEALTH
 
     dummy_size := v2{32, 32}
-    e.aabb = aabb_make(e.pos, dummy_size, .bottom_center)
+    e.aabb = aabb_make(e.pos, dummy_size, Pivot.bottom_center)
 }
 
 setup_arrow :: proc(e: ^Entity, start_pos: Vector2, target_pos: Vector2){
@@ -1604,31 +1736,201 @@ load_animation_frames :: proc(directory: string, prefix: string) -> ([]Image_Id,
 
 AABB :: Vector4
 
-aabb_make :: proc(pos: Vector2, size: Vector2, pivot: Pivot) -> Vector4{
-    half_size := size * 0.5
-
-    offset := -scale_from_pivot(pivot) * size
-
-    min := pos + offset
-    max := min + size
-
-    return Vector4{min.x, min.y, max.x, max.y}
-}
-
 aabb_collide :: proc(a, b: Vector4) ->bool {
     return !(a.z < b.x || a.x > b.z || a.w < b.y || a.y > b.w)
 }
 
+aabb_collide_aabb :: proc(a: AABB, b: AABB) -> (bool, Vector2) {
+	dx := (a.z + a.x) / 2 - (b.z + b.x) / 2;
+	dy := (a.w + a.y) / 2 - (b.w + b.y) / 2;
+	overlap_x := (a.z - a.x) / 2 + (b.z - b.x) / 2 - abs(dx);
+	overlap_y := (a.w - a.y) / 2 + (b.w - b.y) / 2 - abs(dy);
+	if overlap_x <= 0 || overlap_y <= 0 {
+		return false, Vector2{};
+	}
+	penetration := Vector2{};
+	if overlap_x < overlap_y {
+		penetration.x = overlap_x if dx > 0 else -overlap_x;
+	} else {
+		penetration.y = overlap_y if dy > 0 else -overlap_y;
+	}
+	return true, penetration;
+}
+
+aabb_get_center :: proc(a: Vector4) -> Vector2 {
+	min := a.xy;
+	max := a.zw;
+	return { min.x + 0.5 * (max.x-min.x), min.y + 0.5 * (max.y-min.y) };
+}
+
+aabb_make_with_pos :: proc(pos: Vector2, size: Vector2, pivot: Pivot) -> Vector4 {
+	aabb := (Vector4){0,0,size.x,size.y};
+	aabb = aabb_shift(aabb, pos - scale_from_pivot(pivot) * size);
+	return aabb;
+}
+
+aabb_make_with_size :: proc(size: Vector2, pivot: Pivot) -> Vector4 {
+	return aabb_make({}, size, pivot);
+}
+
+aabb_make :: proc{
+	aabb_make_with_pos,
+	aabb_make_with_size
+}
+
+aabb_shift :: proc(aabb: Vector4, amount: Vector2) -> Vector4 {
+	return {aabb.x + amount.x, aabb.y + amount.y, aabb.z + amount.x, aabb.w + amount.y};
+}
+
 aabb_contains :: proc(aabb: Vector4, p: Vector2) -> bool {
-    return (p.x >= aabb.x) && (p.x <= aabb.z) &&
-           (p.y >= aabb.y) && (p.y <= aabb.w)
+	return (p.x >= aabb.x) && (p.x <= aabb.z) &&
+           (p.y >= aabb.y) && (p.y <= aabb.w);
+}
+
+aabb_size :: proc(aabb: AABB) -> Vector2 {
+	return { abs(aabb.x - aabb.z), abs(aabb.y - aabb.w) }
 }
 
 //
 // :ui & control
+UI_Config :: struct {
+   skills: Skills_UI_Config,
+}
+
+UI_Hot_Reload :: struct {
+   config_path: string,
+   last_modified_time: time.Time,
+   config: UI_Config,
+}
+
+UI_CONSTANTS :: struct {
+    MENU_TRANSITION_SPEED: f32,
+    HOVER_SCALE_SPEED: f32,
+    TOOLTIP_FADE_SPEED: f32,
+    SKILL_BUTTON_SIZE: Vector2,
+    SKILL_MENU_SIZE: Vector2,
+    SKILL_ICON_SIZE: Vector2,
+    NORMAL_SCALE: f32,
+    HOVER_SCALE: f32,
+    MENU_PADDING: f32,
+    ITEM_SPACING: f32,
+}
+
+UI := UI_CONSTANTS{
+    MENU_TRANSITION_SPEED = 10.0,
+    HOVER_SCALE_SPEED = 15.0,
+    TOOLTIP_FADE_SPEED = 8.0,
+    SKILL_BUTTON_SIZE = {48, 48},
+    SKILL_MENU_SIZE = {400, 500},
+    SKILL_ICON_SIZE = {40, 40},
+    NORMAL_SCALE = 1.0,
+    HOVER_SCALE = 1.1,
+    MENU_PADDING = 20.0,
+    ITEM_SPACING = 10.0,
+}
+
+UI_Colors :: struct {
+    background: Vector4,
+    panel: Vector4,
+    button: Vector4,
+    button_hover: Vector4,
+    text: Vector4,
+    text_disabled: Vector4,
+    xp_bar_bg: Vector4,
+    xp_bar_fill: Vector4,
+    tooltip_bg: Vector4,
+}
+
+Colors := UI_Colors{
+    background = {0.1, 0.1, 0.1, 0.95},
+    panel = {0.2, 0.2, 0.2, 0.9},
+    button = {0.3, 0.3, 0.3, 1.0},
+    button_hover = {0.4, 0.4, 0.4, 1.0},
+    text = {1.0, 1.0, 1.0, 1.0},
+    text_disabled = {0.6, 0.6, 0.6, 1.0},
+    xp_bar_bg = {0.15, 0.15, 0.15, 1.0},
+    xp_bar_fill = {0.0, 0.8, 0.2, 1.0},
+    tooltip_bg = {0.05, 0.05, 0.05, 0.95},
+}
 
 BUTTON_WIDTH :: 200.0
 BUTTON_HEIGHT :: 50.0
+
+init_ui_state :: proc(gs: ^Game_State) {
+    gs.ui = {
+        skills_button_scale = UI.NORMAL_SCALE,
+        skills_menu_alpha = 0,
+        skills_tooltip_alpha = 0,
+        skills_hover_tooltip_active = false,
+        skills_hover_tooltip_skill = nil,
+        skills_menu_pos = Vector2{0, 0},
+        last_mouse_pos = Vector2{0, 0},
+    }
+}
+
+update_ui_state :: proc(gs: ^Game_State, dt: f32) {
+    mouse_pos := mouse_pos_in_world_space()
+    button_pos := get_skill_button_pos()
+
+    if is_point_in_rect(mouse_pos, button_pos, UI.SKILL_BUTTON_SIZE * gs.ui.skills_button_scale) {
+        animate_to_target_f32(&gs.ui.skills_button_scale, UI.HOVER_SCALE, dt, UI.HOVER_SCALE_SPEED)
+
+        if key_just_pressed(.LEFT_MOUSE) {
+            gs.skills_system.menu_open = !gs.skills_system.menu_open
+        }
+    } else {
+        animate_to_target_f32(&gs.ui.skills_button_scale, UI.NORMAL_SCALE, dt, UI.HOVER_SCALE_SPEED)
+    }
+
+    target_alpha := gs.skills_system.menu_open ? 1.0 : 0.0
+    animate_to_target_f32(&gs.ui.skills_menu_alpha, f32(target_alpha), dt, UI.MENU_TRANSITION_SPEED)
+
+    if gs.ui.skills_hover_tooltip_active {
+        animate_to_target_f32(&gs.ui.skills_tooltip_alpha, 1.0, dt, UI.TOOLTIP_FADE_SPEED)
+    } else {
+        animate_to_target_f32(&gs.ui.skills_tooltip_alpha, 0.0, dt, UI.TOOLTIP_FADE_SPEED)
+    }
+
+    gs.ui.last_mouse_pos = mouse_pos
+}
+
+draw_panel :: proc(pos, size: Vector2, color: Vector4, z_layer := ZLayer.ui) {
+    draw_rect_aabb(
+        pos - size * 0.5,
+        size,
+        col = color,
+        z_layer = z_layer,
+    )
+}
+
+draw_skill_tooltip :: proc(skill: ^Skill, pos: Vector2) {
+   if skill == nil do return
+   push_z_layer(.ui)
+
+   size := v2{200, 120}
+   padding := v2{10, 10}
+   tooltip_aabb := aabb_make(pos, size, Pivot.center_center)
+
+   draw_rect_aabb_actually(tooltip_aabb, col = Colors.tooltip_bg)
+
+   text_start := pos - size * 0.5 + padding
+   line_height := f32(20)
+
+   draw_text(text_start + v2{0, 0}, skill.name, scale = 1.2)
+
+   draw_text(text_start + v2{0, line_height}, skill.description)
+
+   bonus := calculate_skill_bonus(skill) * 100
+   draw_text(
+       text_start + v2{0, line_height * 2},
+       fmt.tprintf("Current Bonus: +%.1f%%", bonus)
+   )
+
+   draw_text(
+       text_start + v2{0, line_height * 3},
+       fmt.tprintf("Level: %d", skill.level)
+   )
+}
 
 has_active_dummy :: proc() -> bool {
     for &en in gs.entities {
@@ -1648,13 +1950,6 @@ check_spawn_button :: proc() {
         return
     }
 
-    if key_just_pressed(.LEFT_MOUSE) {
-        fmt.println("Left mouse just pressed")
-        fmt.println("Raw mouse pos:", app_state.input_state.mouse_x, app_state.input_state.mouse_y)
-        world_pos := mouse_pos_in_world_space()
-        fmt.println("World pos:", world_pos)
-    }
-
     button_pos := v2{-BUTTON_WIDTH/2, 200}
     mouse_pos := mouse_pos_in_world_space()
 
@@ -1669,6 +1964,7 @@ check_spawn_button :: proc() {
         spawn_dummy(v2{300, -320})
     }
 }
+
 
 //
 // :quests
@@ -1800,7 +2096,7 @@ render_quest_entry :: proc(quest: ^Quest, pos: Vector2, system: ^Quests_System) 
         draw_text(text_pos, "Select", z_layer = .ui)
 
         mouse_pos := mouse_pos_in_world_space()
-        button_bounds := aabb_make(button_pos, button_size, .bottom_left)
+        button_bounds := aabb_make(button_pos, button_size, Pivot.bottom_left)
         if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
             system.active_quest = quest
             system.timer = QUEST_TICK_TIME
@@ -1835,7 +2131,7 @@ render_quest_menu_button :: proc() {
     draw_text(text_pos, "Quests Menu", z_layer = .ui)
 
     mouse_pos := mouse_pos_in_world_space()
-    button_bounds := aabb_make(button_pos, button_size, .bottom_left)
+    button_bounds := aabb_make(button_pos, button_size, Pivot.bottom_left)
     if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
         gs.quests_system.menu_open = !gs.quests_system.menu_open
         if gs.quests_system.menu_open {
@@ -1879,6 +2175,70 @@ SKILL_COSTS :: [Skill_Type]int {
     .strength_boost = 300,
     .speed_boost = 500,
     .critical_boost = 800,
+}
+
+Skills_UI_Config :: struct {
+    menu: struct {
+        pos_x: f32,
+        pos_y: f32,
+        size_x: f32,
+        size_y: f32,
+        background_sprite: Image_Id,
+    },
+    button: struct {
+        pos_y: f32,
+        size_x: f32,
+        size_y: f32,
+        sprite: Image_Id,
+    },
+    next_skill: struct {
+        offset_x: f32,
+        offset_y: f32,
+        panel_size_x: f32,
+        panel_size_y: f32,
+        title_offset_x: f32,
+        title_offset_y: f32,
+        name_offset_x: f32,
+        name_offset_y: f32,
+        cost_offset_x: f32,
+        cost_offset_y: f32,
+        button_offset_x: f32,
+        button_offset_y: f32,
+        button_size_x: f32,
+        button_size_y: f32,
+    },
+    unlocked_skills: struct {
+        start_offset_x: f32,
+        start_offset_y: f32,
+        spacing_y: f32,
+        radio_button: struct {
+            offset_x: f32,
+            offset_y: f32,
+            size_x: f32,
+            size_y: f32,
+            selected_sprite: Image_Id,
+            unselected_sprite: Image_Id,
+        },
+        skill_name: struct {
+            offset_x: f32,
+            offset_y: f32,
+            scale: f32,
+        },
+        level_text: struct {
+            offset_x: f32,
+            offset_y: f32,
+            scale: f32,
+        },
+    },
+    tooltip: struct {
+        offset_x: f32,
+        offset_y: f32,
+        size_x: f32,
+        size_y: f32,
+        padding_x: f32,
+        padding_y: f32,
+        line_spacing: f32,
+    },
 }
 
 init_skills_system :: proc() -> Skills_System {
@@ -1999,23 +2359,195 @@ get_skill_cost :: proc(type: Skill_Type) -> int {
 }
 
 render_skills_ui :: proc() {
-    system := &gs.skills_system
-    if system == nil || !system.is_unlocked {
-        return
+    if !gs.skills_system.menu_open do return
+    if gs.ui.skills_menu_alpha <= 0 do return
+
+    cfg := gs.ui_config.skills
+    alpha := gs.ui.skills_menu_alpha
+    push_z_layer(.ui)
+
+    menu_pos := v2{cfg.menu.pos_x, cfg.menu.pos_y}
+    menu_size := v2{cfg.menu.size_x, cfg.menu.size_y}
+    draw_sprite(menu_pos, cfg.menu.background_sprite,
+        pivot = .center_center,
+        color_override = v4{0,0,0,1-alpha})
+
+    next_skill_pos := menu_pos + v2{cfg.next_skill.offset_x, cfg.next_skill.offset_y}
+
+    next_skill: ^Skill
+    for &skill in gs.skills_system.skills {
+        if !skill.is_unlocked {
+            next_skill = &skill
+            break
+        }
     }
 
-    menu_pos := v2{-620, 320}
-    menu_size := v2{300, 400}
-    draw_rect_aabb(menu_pos, menu_size, col = v4{0.1, 0.1, 0.1, 0.9}, z_layer = .ui)
-
-    gold_pos := menu_pos + v2{10, -30}
-    draw_text(gold_pos, fmt.tprintf("Gold: %d", system.gold), scale = 1.2, z_layer = .ui)
-
-    skill_y := menu_pos.y - 70
-    for &skill in system.skills {
-        render_skill_entry(&skill, v2{menu_pos.x + 10, skill_y}, system)
-        skill_y -= 80
+    if next_skill != nil {
+        draw_next_skill_panel(next_skill, next_skill_pos, alpha)
     }
+
+    unlocked_pos := menu_pos + v2{cfg.unlocked_skills.start_offset_x, cfg.unlocked_skills.start_offset_y}
+    draw_unlocked_skills(unlocked_pos, alpha)
+}
+
+draw_unlocked_skills :: proc(start_pos: Vector2, alpha: f32) {
+    cfg := gs.ui_config.skills.unlocked_skills
+    push_z_layer(.ui)
+
+    pos := start_pos
+    spacing := v2{0, cfg.spacing_y}
+
+    for &skill in gs.skills_system.skills {
+        if !skill.is_unlocked do continue
+
+        is_active := gs.skills_system.active_skill == &skill
+
+        radio_pos := pos + v2{cfg.radio_button.offset_x, cfg.radio_button.offset_y}
+        radio_sprite := is_active ? cfg.radio_button.selected_sprite : cfg.radio_button.unselected_sprite
+        draw_sprite(
+            radio_pos,
+            radio_sprite,
+            pivot = .center_center,
+            color_override = v4{1,1,1,0},
+            z_layer = .ui
+        )
+
+        name_pos := pos + v2{cfg.skill_name.offset_x, cfg.skill_name.offset_y}
+        draw_text(
+            name_pos,
+            skill.name,
+            col = Colors.text * v4{1,1,1,alpha},
+            scale = auto_cast cfg.skill_name.scale,
+            pivot = .center_left,
+            z_layer = .ui
+        )
+
+        level_pos := pos + v2{cfg.level_text.offset_x, cfg.level_text.offset_y}
+        draw_text(
+            level_pos,
+            fmt.tprintf("Level %d", skill.level),
+            col = Colors.text * v4{1,1,1,alpha},
+            scale = auto_cast cfg.level_text.scale,
+            pivot = .center_left,
+            z_layer = .ui
+        )
+
+        radio_size := v2{cfg.radio_button.size_x, cfg.radio_button.size_y}
+        click_area := aabb_make(radio_pos, radio_size, Pivot.center_center)
+
+        if aabb_contains(click_area, mouse_pos_in_screen_space()) {
+            gs.ui.skills_hover_tooltip_active = true
+            gs.ui.skills_hover_tooltip_skill = &skill
+
+            tooltip_cfg := gs.ui_config.skills.tooltip
+            tooltip_pos := pos + v2{tooltip_cfg.offset_x, tooltip_cfg.offset_y}
+            draw_skill_tooltip(&skill, tooltip_pos)
+
+            if key_just_pressed(.LEFT_MOUSE) {
+                gs.skills_system.active_skill = &skill
+            }
+        }
+
+        pos += spacing
+    }
+}
+
+draw_skill_icon :: proc(skill: ^Skill, pos: Vector2, is_active: bool, alpha: f32) {
+    frame_color := is_active ? Colors.button_hover : Colors.button
+    draw_sprite(pos, .skills_icon_frame, pivot = .center_center, color_override = frame_color * v4{1,1,1,alpha})
+
+    draw_sprite(pos, .skills_button, pivot = .center_center, color_override = v4{1,1,1,alpha})
+
+    if is_active {
+        bar_pos := pos + v2{0, -UI.SKILL_ICON_SIZE.y * 0.6}
+        bar_size := v2{UI.SKILL_ICON_SIZE.x * 0.8, 4}
+        xp_ratio := f32(skill.current_xp) / f32(skill.xp_to_next_level)
+
+        draw_rect_aabb(bar_pos, bar_size, col = Colors.xp_bar_bg * v4{1,1,1,alpha}, z_layer = .ui)
+        draw_rect_aabb(bar_pos, v2{bar_size.x * xp_ratio, bar_size.y}, col = Colors.xp_bar_fill * v4{1,1,1,alpha}, z_layer = .ui)
+    }
+}
+
+draw_button :: proc(pos: Vector2, size: Vector2, text: string, color: Vector4, alpha: f32) -> bool {
+    hover := is_point_in_rect(mouse_pos_in_world_space(), pos, size)
+    button_color := hover ? color * 1.2 : color
+
+    draw_rect_aabb(pos - size * 0.5, size, col = button_color * v4{1,1,1,alpha}, z_layer = .ui)
+    draw_text(pos, text, pivot = Pivot.center_center, z_layer = .ui)
+
+    return hover && key_just_pressed(.LEFT_MOUSE)
+}
+
+draw_next_skill_panel :: proc(skill: ^Skill, pos: Vector2, alpha: f32) {
+    if skill == nil do return
+    cfg := gs.ui_config.skills.next_skill
+    push_z_layer(.ui)
+
+    panel_size := v2{cfg.panel_size_x, cfg.panel_size_y}
+    draw_sprite(pos,
+        .next_skill_panel_bg,
+        pivot = .center_center,
+        color_override = v4{1,1,1,0},
+        z_layer = .ui
+    )
+
+    cost := get_skill_cost(skill.type)
+    can_afford := gs.skills_system.gold >= cost
+
+    title_pos := pos + v2{cfg.title_offset_x, cfg.title_offset_y}
+    draw_text(
+        title_pos,
+        "Next Available Skill",
+        col = Colors.text * v4{1,1,1,1},
+        scale = 1.2,
+        pivot = .center_left,
+        z_layer = .ui,
+    )
+
+    name_pos := pos + v2{cfg.name_offset_x, cfg.name_offset_y}
+    draw_text(
+        name_pos,
+        skill.name,
+        col = Colors.text * v4{1,1,1,1},
+        pivot = .center_left,
+        z_layer = .ui
+    )
+
+    cost_pos := pos + v2{cfg.cost_offset_x, cfg.cost_offset_y}
+    draw_text(
+        cost_pos,
+        fmt.tprintf("Cost: %d gold", cost),
+        col = Colors.text * v4{1,1,1,1},
+        pivot = .center_left,
+        z_layer = .ui
+    )
+
+    button_pos := pos + v2{cfg.button_offset_x, cfg.button_offset_y}
+    button_size := v2{cfg.button_size_x, cfg.button_size_y}
+
+    draw_sprite(
+        button_pos,
+        .next_skill_button_bg,
+        pivot = .center_center,
+        color_override = can_afford ? v4{1,1,1,0} : v4{1,0.5,0.5,0},
+        z_layer = .ui
+    )
+
+    mouse_pos := mouse_pos_in_world_space()
+    button_bounds := aabb_make(button_pos, button_size, Pivot.center_center)
+    hover := aabb_contains(button_bounds, mouse_pos)
+
+    if hover && can_afford && key_just_pressed(.LEFT_MOUSE) {
+        unlock_skill(&gs.skills_system, skill)
+    }
+
+    draw_text(
+        button_pos,
+        "Unlock",
+        col = Colors.text * v4{1,1,1,1},
+        pivot = .center_center,
+        z_layer = .ui
+    )
 }
 
 render_skill_entry :: proc(skill: ^Skill, pos: Vector2, system: ^Skills_System) {
@@ -2044,7 +2576,7 @@ render_skill_entry :: proc(skill: ^Skill, pos: Vector2, system: ^Skills_System) 
             draw_text(text_pos, "Select", z_layer = .ui)
 
             mouse_pos := mouse_pos_in_world_space()
-            button_bounds := aabb_make(button_pos, button_size, .bottom_left)
+            button_bounds := aabb_make(button_pos, button_size, Pivot.bottom_left)
             if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
                 system.active_skill = skill
             }
@@ -2073,7 +2605,7 @@ render_skill_entry :: proc(skill: ^Skill, pos: Vector2, system: ^Skills_System) 
 
         if can_afford {
             mouse_pos := mouse_pos_in_world_space()
-            button_bounds := aabb_make(button_pos, button_size, .bottom_left)
+            button_bounds := aabb_make(button_pos, button_size, Pivot.bottom_left)
             if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
                 unlock_skill(system, skill)
             }
@@ -2103,18 +2635,107 @@ render_active_skill_ui :: proc(skill: ^Skill) {
 }
 
 render_skill_menu_button :: proc() {
-    button_pos := v2{-620, 340}
-    button_size := v2{120, 30}
-    draw_rect_aabb(button_pos, button_size, col = v4{0.2, 0.2, 0.2, 1}, z_layer = .ui)
-    text_pos := button_pos + v2{10, 8}
-    draw_text(text_pos, "Skills Menu", z_layer = .ui)
+    cfg := gs.ui_config.skills.button
+    button_pos := v2{0, cfg.pos_y}
+    button_size := v2{cfg.size_x, cfg.size_y} * gs.ui.skills_button_scale
 
-    mouse_pos := mouse_pos_in_world_space()
-    button_bounds := aabb_make(button_pos, button_size, .bottom_left)
-    if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
-        gs.skills_system.menu_open = !gs.skills_system.menu_open
-        if gs.skills_system.menu_open {
-            gs.quests_system.menu_open = false
-        }
-    }
+    draw_sprite(
+        button_pos,
+        cfg.sprite,
+        pivot = .center_center,
+        xform = xform_scale(v2{gs.ui.skills_button_scale, gs.ui.skills_button_scale}),
+        z_layer = .ui,
+    )
+}
+
+//
+// :hotreload
+init_ui_hot_reload :: proc() -> UI_Hot_Reload {
+   hr := UI_Hot_Reload{
+       config_path = "./res_workbench/ui_config.json",
+       config = UI_Config{
+           skills = Skills_UI_Config{
+               menu = {
+                   pos_y = game_res_h * 0.25,
+                   size_x = 400,
+                   size_y = 500,
+                   background_sprite = .skills_panel_bg,
+               },
+               button = {
+                   pos_y = game_res_h * 0.45,
+                   size_x = 48,
+                   size_y = 48,
+                   sprite = .skills_button,
+               },
+               next_skill = {
+                   offset_x = 0,
+                   offset_y = 150,
+                   panel_size_x = 320,
+                   panel_size_y = 100,
+                   title_offset_x = -140,
+                   title_offset_y = 20,
+                   name_offset_x = -140,
+                   name_offset_y = -5,
+                   cost_offset_x = -140,
+                   cost_offset_y = -30,
+                   button_offset_x = 120,
+                   button_offset_y = 0,
+                   button_size_x = 100,
+                   button_size_y = 30,
+               },
+               tooltip = {
+                   offset_x = 0,
+                   offset_y = 30,
+                   size_x = 200,
+                   size_y = 120,
+                   padding_x = 10,
+                   padding_y = 10,
+                   line_spacing = 20,
+               },
+           },
+       },
+   }
+
+   if !os.exists(hr.config_path) {
+       save_ui_config(&hr)
+   }
+
+   load_ui_config(&hr)
+   return hr
+}
+
+save_ui_config :: proc(hr: ^UI_Hot_Reload) {
+   data, err := json.marshal(hr.config)
+   if err != nil {
+       log_error("Error marshaling config:", err)
+       return
+   }
+   os.write_entire_file(hr.config_path, data)
+}
+
+load_ui_config :: proc(hr: ^UI_Hot_Reload) {
+   data, ok := os.read_entire_file(hr.config_path)
+   if !ok {
+       log_error("Could not read config file")
+       return
+   }
+
+   err := json.unmarshal(data, &hr.config)
+   if err != nil {
+       log_error("Error unmarshaling config:", err)
+       return
+   }
+
+   if file_info, err := os.stat(hr.config_path); err == 0 {
+       hr.last_modified_time = file_info.modification_time
+   }
+}
+
+check_and_reload :: proc(hr: ^UI_Hot_Reload) {
+   if file_info, err := os.stat(hr.config_path); err == 0 {
+       if time.duration_seconds(time.diff(hr.last_modified_time, file_info.modification_time)) > 0 {
+           load_ui_config(hr)
+           log_error("Reloaded UI configuration")
+       }
+   }
 }

@@ -1,0 +1,65 @@
+{
+  "skills": {
+    "menu": {
+      "pos_x": 0,
+      "pos_y": 30,
+      "size_x": 400,
+      "size_y": 500,
+      "background_sprite": "skills_panel_bg",
+    },
+    "button": {
+      "pos_y": 324,
+      "size_x": 48,
+      "size_y": 48,
+      "sprite": "skills_button"
+    },
+    "next_skill": {
+      "offset_x": -400,
+      "offset_y": 190,
+      "panel_size_x": 320,
+      "panel_size_y": 100,
+      "title_offset_x": -120,
+      "title_offset_y": 45,
+      "name_offset_x": -120,
+      "name_offset_y": 0,
+      "cost_offset_x": -120,
+      "cost_offset_y": -30,
+      "button_offset_x": 85,
+      "button_offset_y": -40,
+      "button_size_x": 100,
+      "button_size_y": 30
+    },
+    "unlocked_skills": {
+      "start_offset_x": -210,
+      "start_offset_y": 150,
+      "spacing_y": 40,
+      "radio_button": {
+        "offset_x": 0,
+        "offset_y": 0,
+        "size_x": 24,
+        "size_y": 24,
+        "selected_sprite": "radio_selected",
+        "unselected_sprite": "radio_unselected"
+      },
+      "skill_name": {
+        "offset_x": 35,
+        "offset_y": 0,
+        "scale": 1.4
+      },
+      "level_text": {
+        "offset_x": 370,
+        "offset_y": 0,
+        "scale": 1.4
+      }
+    },
+    "tooltip": {
+      "offset_x": 0,
+      "offset_y": 30,
+      "size_x": 200,
+      "size_y": 120,
+      "padding_x": 10,
+      "padding_y": 10,
+      "line_spacing": 20
+    }
+  }
+}
