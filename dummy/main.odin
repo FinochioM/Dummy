@@ -66,6 +66,7 @@ init :: proc "c" () {
 	gs = &app_state.game
 
     gs.skills_system = init_skills_system()
+    gs.quests_system = init_quests_system()
 
     for &e, kind in entity_data {
         setup_entity(&e, kind)
@@ -711,6 +712,7 @@ Game_State :: struct {
 	latest_entity_id: u64,
 	player_handle: Entity_Handle,
 	skills_system: Skills_System,
+    quests_system: Quests_System,
 }
 gs: ^Game_State
 
@@ -765,6 +767,7 @@ update :: proc() {
 	}
 
 	check_spawn_button()
+	update_quests_system(&gs.quests_system, f32(dt))
 
 	gs.ticks += 1
 }
@@ -805,9 +808,16 @@ render :: proc() {
 		}
 	}
 
-	if gs.skills_system.is_unlocked {
-	   render_skills_ui()
-	}
+    if gs.skills_system.is_unlocked {
+        render_skill_menu_button()
+        render_quest_menu_button()
+
+        if gs.skills_system.menu_open {
+            render_skills_ui()
+        } else if gs.quests_system.menu_open {
+            render_quests_ui()
+        }
+    }
 
     draw_text(v2{-200, 100}, "Dummy", scale = 2.0, z_layer = .ui)
 
@@ -834,9 +844,9 @@ draw_dummy_at_pos :: proc(en: Entity){
         health_ratio := en.health / en.max_health
 
         bar_pos := en.pos + v2{auto_cast -bar_width / 2, 100}
-        draw_rect_aabb(bar_pos, v2{auto_cast bar_width, auto_cast bar_height}, col=v4{1,0,0,1}, z_layer = .ui)
+        draw_rect_aabb(bar_pos, v2{auto_cast bar_width, auto_cast bar_height}, col=v4{0.243,0.243,0.259,1}, z_layer = .ui)
 
-        draw_rect_aabb(bar_pos, v2{auto_cast bar_width * health_ratio, auto_cast bar_height}, col=v4{0,1,0,1}, z_layer = .ui)
+        draw_rect_aabb(bar_pos, v2{auto_cast bar_width * health_ratio, auto_cast bar_height * 0.5}, col=v4{0,1,0,1}, z_layer = .ui)
     }
 }
 
@@ -1340,6 +1350,7 @@ event :: proc "c" (event: ^sapp.Event) {
 		}
 		case .MOUSE_DOWN:
 		if !(.down in input_state.keys[map_sokol_mouse_button(event.mouse_button)]) {
+			input_state.keys[map_sokol_mouse_button(event.mouse_button)] += { .down, .just_pressed }
 		}
 
 		case .MOUSE_MOVE:
@@ -1660,6 +1671,180 @@ check_spawn_button :: proc() {
 }
 
 //
+// :quests
+QUEST_TICK_TIME :: 1.5
+
+Quest_Type :: enum {
+    nil,
+    gold_generation,
+}
+
+Quest :: struct {
+    type: Quest_Type,
+    name: string,
+    description: string,
+    level: int,
+    is_unlocked: bool,
+    cooldown: f32,
+    required_skill: Skill_Type,
+    required_skill_levels: [5]int,
+    gold_per_tick: [5]int,
+}
+
+Quests_System :: struct {
+    quests: [dynamic]Quest,
+    active_quest: ^Quest,
+    timer: f32,
+    menu_open: bool,
+}
+
+init_quests_system :: proc() -> Quests_System {
+    system := Quests_System {
+        quests = make([dynamic]Quest),
+        active_quest = nil,
+        timer = 0,
+        menu_open = false,
+    }
+
+    gold_quest := Quest{
+        type = .gold_generation,
+        name = "Gold Generation",
+        description ="Generates gold over time",
+        level = 1,
+        is_unlocked = false,
+        cooldown = QUEST_TICK_TIME,
+        required_skill = .xp_boost,
+        required_skill_levels = {5, 8, 12, 15, 20},
+        gold_per_tick = {1, 2, 3, 4, 5},
+    }
+
+    append(&system.quests, gold_quest)
+
+    return system
+}
+
+update_quests_system :: proc(system: ^Quests_System, dt: f32) {
+    if system.active_quest == nil {
+        return
+    }
+
+    system.timer -= dt
+    if system.timer <= 0 {
+        system.timer = QUEST_TICK_TIME
+        give_quest_rewards(system.active_quest)
+    }
+}
+
+give_quest_rewards :: proc(quest: ^Quest) {
+    if quest == nil {
+        return
+    }
+
+    #partial switch quest.type {
+        case .gold_generation:
+            gs.skills_system.gold += quest.gold_per_tick[quest.level - 1]
+    }
+}
+
+check_quest_unlocks :: proc(skill: ^Skill) {
+    if skill == nil {
+        return
+    }
+
+    for &quest in gs.quests_system.quests {
+        if !quest.is_unlocked && quest.required_skill == skill.type {
+            if skill.level >= quest.required_skill_levels[0] {
+                quest.is_unlocked = true
+            }
+        }
+    }
+}
+
+render_quests_ui :: proc() {
+    system := &gs.quests_system
+    if system == nil {
+        return
+    }
+
+    menu_pos := v2{-620, 260}
+    menu_size := v2{300, 400}
+    draw_rect_aabb(menu_pos, menu_size, col = v4{0.1, 0.1, 0.1, 0.9}, z_layer = .ui)
+
+    quest_y := menu_pos.y - 50
+    for &quest in system.quests {
+        if quest.is_unlocked {
+            render_quest_entry(&quest, v2{menu_pos.x + 10, quest_y}, system)
+            quest_y -= 80
+        }
+    }
+}
+
+render_quest_entry :: proc(quest: ^Quest, pos: Vector2, system: ^Quests_System) {
+    is_active := system.active_quest == quest
+    bg_color := is_active ? v4{0.3, 0.3, 0.3, 0.8} : v4{0.2, 0.2, 0.2, 0.8}
+
+    entry_size := v2{280, 70}
+    draw_rect_aabb(pos, entry_size, col = bg_color, z_layer = .ui)
+
+    name_pos := pos + v2{5, 5}
+    draw_text(name_pos, fmt.tprintf("%s (Level %d)", quest.name, quest.level), z_layer = .ui)
+
+    reward_pos := pos + v2{5, -20}
+    draw_text(reward_pos, fmt.tprintf("Gold per tick: %d", quest.gold_per_tick[quest.level - 1]), z_layer = .ui)
+
+    if !is_active {
+        button_pos := pos + v2{200, 5}
+        button_size := v2{70, 25}
+        draw_rect_aabb(button_pos, button_size, col = v4{0.3, 0.5, 0.3, 1}, z_layer = .ui)
+        text_pos := button_pos + v2{10, 5}
+        draw_text(text_pos, "Select", z_layer = .ui)
+
+        mouse_pos := mouse_pos_in_world_space()
+        button_bounds := aabb_make(button_pos, button_size, .bottom_left)
+        if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
+            system.active_quest = quest
+            system.timer = QUEST_TICK_TIME
+        }
+    }
+
+    if quest.level < 5 {
+        next_level_pos := pos + v2{5, -45}
+        req_skill_level := quest.required_skill_levels[quest.level]
+        draw_text(next_level_pos, fmt.tprintf("Next level at %s level %d",
+            gs.skills_system.skills[quest.required_skill].name, req_skill_level), z_layer = .ui)
+    }
+}
+
+render_active_quest_ui :: proc(quest: ^Quest) {
+    if quest == nil {
+        return
+    }
+
+    text_pos := v2{-620, 240}
+    draw_text(text_pos, fmt.tprintf("%s (Level %d)", quest.name, quest.level), scale = 1.2, z_layer = .ui)
+
+    reward_pos := text_pos + v2{0, -25}
+    draw_text(reward_pos, fmt.tprintf("Gold per tick: %d", quest.gold_per_tick[quest.level - 1]), z_layer = .ui)
+}
+
+render_quest_menu_button :: proc() {
+    button_pos := v2{-620, 280}
+    button_size := v2{120, 30}
+    draw_rect_aabb(button_pos, button_size, col = v4{0.2, 0.2, 0.2, 1}, z_layer = .ui)
+    text_pos := button_pos + v2{10, 8}
+    draw_text(text_pos, "Quests Menu", z_layer = .ui)
+
+    mouse_pos := mouse_pos_in_world_space()
+    button_bounds := aabb_make(button_pos, button_size, .bottom_left)
+    if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
+        gs.quests_system.menu_open = !gs.quests_system.menu_open
+        if gs.quests_system.menu_open {
+            gs.skills_system.menu_open = false
+        }
+    }
+}
+
+//
 // :skills
 Skill_Type :: enum {
     nil,
@@ -1717,7 +1902,7 @@ init_skills_system :: proc() -> Skills_System {
         skill := Skill {
             type = data.type,
             name = data.name,
-            level = 1,
+            level = 0,
             current_xp = 0,
             xp_to_next_level = 100,
             description = data.desc,
@@ -1765,12 +1950,17 @@ add_xp_to_active_skill :: proc(system: ^Skills_System, base_xp: int) {
     xp_multiplier := calculate_xp_boost(system.active_skill)
     total_xp := int(f32(base_xp) * xp_multiplier)
 
+    prev_level := system.active_skill.level
     system.active_skill.current_xp += total_xp
 
     for system.active_skill.current_xp >= system.active_skill.xp_to_next_level {
         system.active_skill.current_xp -= system.active_skill.xp_to_next_level
         system.active_skill.level += 1
         system.active_skill.xp_to_next_level = int(f32(system.active_skill.xp_to_next_level) * 1.5)
+    }
+
+    if system.active_skill.level > prev_level {
+        check_quest_unlocks(system.active_skill)
     }
 }
 
@@ -1811,25 +2001,6 @@ get_skill_cost :: proc(type: Skill_Type) -> int {
 render_skills_ui :: proc() {
     system := &gs.skills_system
     if system == nil || !system.is_unlocked {
-        return
-    }
-
-    button_pos := v2{-620, 340}
-    button_size := v2{120, 30}
-    draw_rect_aabb(button_pos, button_size, col = v4{0.2, 0.2, 0.2, 1}, z_layer = .ui)
-    text_pos := button_pos + v2{10, 8}
-    draw_text(text_pos, "Skills Menu", z_layer = .ui)
-
-    mouse_pos := mouse_pos_in_world_space()
-    button_bounds := aabb_make(button_pos, button_size, .bottom_left)
-    if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
-        system.menu_open = !system.menu_open
-    }
-
-    if !system.menu_open {
-        if system.active_skill != nil {
-            render_active_skill_ui(system.active_skill)
-        }
         return
     }
 
@@ -1929,4 +2100,21 @@ render_active_skill_ui :: proc(skill: ^Skill) {
     bonus_text_pos := xp_text_pos + v2{0, -20}
     bonus := calculate_skill_bonus(skill) * 100
     draw_text(bonus_text_pos, fmt.tprintf("Bonus: +%.1f%%", bonus), z_layer = .ui)
+}
+
+render_skill_menu_button :: proc() {
+    button_pos := v2{-620, 340}
+    button_size := v2{120, 30}
+    draw_rect_aabb(button_pos, button_size, col = v4{0.2, 0.2, 0.2, 1}, z_layer = .ui)
+    text_pos := button_pos + v2{10, 8}
+    draw_text(text_pos, "Skills Menu", z_layer = .ui)
+
+    mouse_pos := mouse_pos_in_world_space()
+    button_bounds := aabb_make(button_pos, button_size, .bottom_left)
+    if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
+        gs.skills_system.menu_open = !gs.skills_system.menu_open
+        if gs.skills_system.menu_open {
+            gs.quests_system.menu_open = false
+        }
+    }
 }
