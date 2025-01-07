@@ -1913,24 +1913,26 @@ draw_skill_tooltip :: proc(skill: ^Skill, pos: Vector2) {
    padding := v2{10, 10}
    tooltip_aabb := aabb_make(pos, size, Pivot.center_center)
 
-   draw_rect_aabb_actually(tooltip_aabb, col = Colors.tooltip_bg)
+   draw_rect_aabb_actually(tooltip_aabb, col = Colors.tooltip_bg, z_layer = .ui)
 
    text_start := pos - size * 0.5 + padding
    line_height := f32(20)
 
-   draw_text(text_start + v2{0, 0}, skill.name, scale = 1.2)
+   draw_text(text_start + v2{0, 0}, skill.name, scale = 1.2, z_layer = .ui)
 
-   draw_text(text_start + v2{0, line_height}, skill.description)
+   draw_text(text_start + v2{0, line_height}, skill.description, z_layer = .ui)
 
    bonus := calculate_skill_bonus(skill) * 100
    draw_text(
        text_start + v2{0, line_height * 2},
-       fmt.tprintf("Current Bonus: +%.1f%%", bonus)
+       fmt.tprintf("Current Bonus: +%.1f%%", bonus),
+       z_layer = .ui
    )
 
    draw_text(
        text_start + v2{0, line_height * 3},
-       fmt.tprintf("Level: %d", skill.level)
+       fmt.tprintf("Level: %d", skill.level),
+       z_layer = .ui
    )
 }
 
@@ -2409,7 +2411,7 @@ draw_unlocked_skills :: proc(start_pos: Vector2, alpha: f32) {
     }
 
     if content_bounds := aabb_make(start_pos, v2{content_width, content_height}, Pivot.center_center);
-       aabb_contains(content_bounds, mouse_pos_in_screen_space()) {
+       aabb_contains(content_bounds, mouse_pos_in_world_space()) {
         scroll_speed := 40.0
         if key_down(.UP) {
             gs.ui.skills_scroll_pos = max(0, gs.ui.skills_scroll_pos - f32(scroll_speed) * f32(sapp.frame_duration()))
@@ -2425,6 +2427,12 @@ draw_unlocked_skills :: proc(start_pos: Vector2, alpha: f32) {
 
     pos := v2{start_pos.x, content_top - spacing * 0.5} - v2{0, gs.ui.skills_scroll_pos}
 
+    mouse_pos := mouse_pos_in_world_space()
+    // Debug print mouse position
+    if key_just_pressed(.LEFT_MOUSE) {
+        loggie("Mouse pos:", mouse_pos)
+    }
+
     for skill, i in gs.skills_system.skills {
         if !skill.is_unlocked do continue
         if pos.y + spacing < content_bottom || pos.y > content_top do continue
@@ -2434,6 +2442,8 @@ draw_unlocked_skills :: proc(start_pos: Vector2, alpha: f32) {
         if pos.y <= content_top && pos.y >= content_bottom {
             radio_pos := pos + v2{cfg.radio_button.offset_x, cfg.radio_button.offset_y}
             radio_sprite := is_active ? cfg.radio_button.selected_sprite : cfg.radio_button.unselected_sprite
+            radio_size := v2{cfg.radio_button.size_x, cfg.radio_button.size_y}
+
             draw_sprite(
                 radio_pos,
                 radio_sprite,
@@ -2441,6 +2451,13 @@ draw_unlocked_skills :: proc(start_pos: Vector2, alpha: f32) {
                 color_override = v4{1,1,1,0},
                 z_layer = .ui
             )
+
+            debug_button := false
+            click_area := aabb_make(radio_pos, radio_size, Pivot.center_center)
+
+            if debug_button {
+                draw_rect_aabb_actually(click_area, col=v4{1,0,0,0.2}, z_layer=.ui)
+            }
 
             name_pos := pos + v2{cfg.skill_name.offset_x, cfg.skill_name.offset_y}
             draw_text(
@@ -2462,16 +2479,24 @@ draw_unlocked_skills :: proc(start_pos: Vector2, alpha: f32) {
                 z_layer = .ui
             )
 
-            radio_size := v2{cfg.radio_button.size_x, cfg.radio_button.size_y}
-            click_area := aabb_make(radio_pos, radio_size, Pivot.center_center)
-            if aabb_contains(click_area, mouse_pos_in_screen_space()) {
+            mouse_over_radio := aabb_contains(click_area, mouse_pos)
+
+            if mouse_over_radio {
                 gs.ui.skills_hover_tooltip_active = true
                 gs.ui.skills_hover_tooltip_skill = &gs.skills_system.skills[i]
+
                 tooltip_cfg := gs.ui_config.skills.tooltip
                 tooltip_pos := pos + v2{tooltip_cfg.offset_x, tooltip_cfg.offset_y}
                 draw_skill_tooltip(&gs.skills_system.skills[i], tooltip_pos)
+
                 if key_just_pressed(.LEFT_MOUSE) {
+                    loggie("Clicking skill:", skill.name)
+                    old_active := gs.skills_system.active_skill
+                    if old_active != nil {
+                        loggie("Old active skill:", old_active.name)
+                    }
                     gs.skills_system.active_skill = &gs.skills_system.skills[i]
+                    loggie("New active skill:", gs.skills_system.active_skill.name)
                 }
             }
         }
@@ -2718,7 +2743,6 @@ render_skill_entry :: proc(skill: ^Skill, pos: Vector2, system: ^Skills_System) 
         cost := get_skill_cost(skill.type)
         cost_pos := pos + v2{5, -20}
         draw_text(cost_pos, fmt.tprintf("Cost: %d gold", cost), z_layer = .ui)
-
 
         can_afford := system.gold >= cost
         button_color := can_afford ? v4{0.3, 0.5, 0.3, 1} : v4{0.5, 0.3, 0.3, 1}

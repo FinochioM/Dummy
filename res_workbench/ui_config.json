@@ -53,8 +53,8 @@
       }
     },
     "tooltip": {
-      "offset_x": 0,
-      "offset_y": 30,
+      "offset_x": 585,
+      "offset_y": -10,
       "size_x": 200,
       "size_y": 120,
       "padding_x": 10,
