@@ -46,6 +46,7 @@ main :: proc() {
 		window_title = "Dummy",
 		icon = { sokol_default = true },
 		logger = { func = slog.func },
+		win32_console_attach = true,
 	})
 }
 
@@ -137,6 +138,26 @@ init :: proc "c" () {
 frame :: proc "c" () {
 	using runtime, linalg
 	context = runtime.default_context()
+
+    width := sapp.width()
+    height := sapp.height()
+    target_ratio := f32(game_res_w) / f32(game_res_h)
+    window_ratio := f32(width) / f32(height)
+
+    viewport_x, viewport_y : i32
+    viewport_w, viewport_h : i32
+
+    if window_ratio > target_ratio {
+        viewport_h = auto_cast height
+        viewport_w = i32(f32(height) * target_ratio)
+        viewport_x = (auto_cast width - viewport_w) / 2
+        viewport_y = 0
+    } else {
+        viewport_w = auto_cast width
+        viewport_h = i32(f32(width) / target_ratio)
+        viewport_x = 0
+        viewport_y = (auto_cast height - viewport_h) / 2
+    }
 
 	draw_frame.reset = {}
 
@@ -270,10 +291,12 @@ get_menu_position :: proc(alpha: f32) -> Vector2 {
 }
 
 is_point_in_rect :: proc(point, pos, size: Vector2) -> bool {
-    return point.x >= pos.x - size.x/2 &&
-           point.x <= pos.x + size.x/2 &&
-           point.y >= pos.y - size.y/2 &&
-           point.y <= pos.y + size.y/2
+    half_size := size * 0.5
+    min := pos - half_size
+    max := pos + half_size
+
+    return point.x >= min.x && point.x <= max.x &&
+           point.y >= min.y && point.y <= max.y
 }
 
 //
@@ -901,10 +924,14 @@ update :: proc() {
 		gs.player_handle = entity_to_handle(en^)
 	}
 
-	draw_frame.coord_space.proj = matrix_ortho3d_f32(window_w * -0.5, window_w * 0.5, window_h * -0.5, window_h * 0.5, -1, 1)
+    width := sapp.width()
+    height := sapp.height()
+    update_projection(int(width), int(height))
 
-	draw_frame.coord_space.camera = Matrix4(1)
-	draw_frame.coord_space.camera *= xform_scale(f32(window_h) / f32(game_res_h))
+	//draw_frame.coord_space.proj = matrix_ortho3d_f32(window_w * -0.5, window_w * 0.5, window_h * -0.5, window_h * 0.5, -1, 1)
+
+	//draw_frame.coord_space.camera = Matrix4(1)
+	//draw_frame.coord_space.camera *= xform_scale(f32(window_h) / f32(game_res_h))
 
 	for &en in gs.entities {
 		en.frame = {}
@@ -1032,23 +1059,26 @@ mouse_pos_in_screen_space :: proc() -> Vector2 {
 }
 
 mouse_pos_in_world_space :: proc() -> Vector2 {
-	if draw_frame.coord_space.proj == {} {
-		log_error("no projection matrix set yet")
-	}
+    if draw_frame.coord_space.proj == {} {
+        log_error("no projection matrix set yet")
+        return v2{0, 0}
+    }
 
-	mouse := v2{app_state.input_state.mouse_x, app_state.input_state.mouse_y}
-	ndc_x := (mouse.x / (f32(window_w) * 0.5)) - 1.0;
-	ndc_y := (mouse.y / (f32(window_h) * 0.5)) - 1.0;
-	ndc_y *= -1
+    mouse := v2{app_state.input_state.mouse_x, app_state.input_state.mouse_y}
 
-	mouse_ndc := v2{ndc_x, ndc_y}
+    width := f32(sapp.width())
+    height := f32(sapp.height())
 
-	mouse_world :v4= v4{mouse_ndc.x, mouse_ndc.y, 0, 1}
+    ndc_x := (mouse.x / width) * 2.0 - 1.0
+    ndc_y := -((mouse.y / height) * 2.0 - 1.0)
 
-	mouse_world *= linalg.inverse(draw_frame.coord_space.proj)
-	mouse_world *= linalg.inverse(draw_frame.coord_space.camera)
+    mouse_clip := v4{ndc_x, ndc_y, 0, 1}
 
-	return mouse_world.xy
+    view_proj := draw_frame.coord_space.proj * draw_frame.coord_space.camera
+    inv_view_proj := linalg.inverse(view_proj)
+    world_pos := mouse_clip * inv_view_proj
+
+    return world_pos.xy
 }
 
 //
@@ -1515,6 +1545,8 @@ event :: proc "c" (event: ^sapp.Event) {
 	input_state := &app_state.input_state
 
 	#partial switch event.type {
+	    case .RESIZED:
+	       update_projection(auto_cast event.window_width, auto_cast event.window_height)
 		case .MOUSE_UP:
 		if .down in input_state.keys[map_sokol_mouse_button(event.mouse_button)] {
 			input_state.keys[map_sokol_mouse_button(event.mouse_button)] -= { .down }
@@ -1542,6 +1574,19 @@ event :: proc "c" (event: ^sapp.Event) {
 			input_state.keys[event.key_code] += { .repeat }
 		}
 	}
+}
+
+update_projection :: proc(width, height: int) {
+    using linalg
+    draw_frame.coord_space.proj = matrix_ortho3d_f32(
+        game_res_w * -0.5,
+        game_res_w * 0.5,
+        game_res_h * -0.5,
+        game_res_h * 0.5,
+        -1,
+        1,
+    )
+    draw_frame.coord_space.camera = Matrix4(1)
 }
 
 //
