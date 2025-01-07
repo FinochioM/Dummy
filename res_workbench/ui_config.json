@@ -63,5 +63,40 @@
       "padding_y": 10,
       "line_spacing": 20
     }
+  },
+    "quests": {
+    "menu": {
+      "pos_x": 0,
+      "pos_y": 30,
+      "size_x": 512,
+      "size_y": 512,
+      "background_sprite": "skills_panel_bg"
+    },
+    "button": {
+      "pos_x": 50,
+      "pos_y": 324,
+      "size_x": 8,
+      "size_y": 8,
+      "sprite": "quests_button"
+    },
+    "quest_entry": {
+      "start_offset_x": 10,
+      "start_offset_y": -50,
+      "spacing_y": 80,
+      "size_x": 280,
+      "size_y": 70,
+      "name_offset_x": 5,
+      "name_offset_y": 5,
+      "reward_offset_x": 5,
+      "reward_offset_y": -20,
+      "next_level_offset_x": 5,
+      "next_level_offset_y": -45,
+      "select_button": {
+        "offset_x": 200,
+        "offset_y": 5,
+        "size_x": 70,
+        "size_y": 25
+      }
+    }
   }
 }

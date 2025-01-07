@@ -547,6 +547,7 @@ Image_Id :: enum {
     next_skill_button_bg,
     radio_selected,
     radio_unselected,
+    quests_button,
 }
 
 Image :: struct {
@@ -858,6 +859,7 @@ Game_State :: struct {
     quests_system: Quests_System,
     ui: struct {
         skills_button_scale: f32,
+        quest_button_scale: f32,
         skills_menu_alpha: f32,
         skills_tooltip_alpha: f32,
         skills_hover_tooltip_active: bool,
@@ -1833,6 +1835,7 @@ aabb_size :: proc(aabb: AABB) -> Vector2 {
 // :ui & control
 UI_Config :: struct {
    skills: Skills_UI_Config,
+   quests: Quest_UI_Config,
 }
 
 UI_Hot_Reload :: struct {
@@ -1897,6 +1900,7 @@ BUTTON_HEIGHT :: 50.0
 init_ui_state :: proc(gs: ^Game_State) {
     gs.ui = {
         skills_button_scale = UI.NORMAL_SCALE,
+        quest_button_scale = UI.NORMAL_SCALE,
         skills_menu_alpha = 0,
         skills_tooltip_alpha = 0,
         skills_hover_tooltip_active = false,
@@ -1908,16 +1912,33 @@ init_ui_state :: proc(gs: ^Game_State) {
 
 update_ui_state :: proc(gs: ^Game_State, dt: f32) {
     mouse_pos := mouse_pos_in_world_space()
-    button_pos := get_skill_button_pos()
 
+    button_pos := get_skill_button_pos()
     if is_point_in_rect(mouse_pos, button_pos, UI.SKILL_BUTTON_SIZE * gs.ui.skills_button_scale) {
         animate_to_target_f32(&gs.ui.skills_button_scale, UI.HOVER_SCALE, dt, UI.HOVER_SCALE_SPEED)
-
         if key_just_pressed(.LEFT_MOUSE) {
             gs.skills_system.menu_open = !gs.skills_system.menu_open
+            if gs.skills_system.menu_open {
+                gs.quests_system.menu_open = false
+            }
         }
     } else {
         animate_to_target_f32(&gs.ui.skills_button_scale, UI.NORMAL_SCALE, dt, UI.HOVER_SCALE_SPEED)
+    }
+
+    cfg := gs.ui_config.quests.button
+    quest_button_pos := v2{cfg.pos_x, cfg.pos_y}
+
+    if is_point_in_rect(mouse_pos, quest_button_pos, UI.SKILL_BUTTON_SIZE * gs.ui.quest_button_scale) {
+        animate_to_target_f32(&gs.ui.quest_button_scale, UI.HOVER_SCALE, dt, UI.HOVER_SCALE_SPEED)
+        if key_just_pressed(.LEFT_MOUSE) {
+            gs.quests_system.menu_open = !gs.quests_system.menu_open
+            if gs.quests_system.menu_open {
+                gs.skills_system.menu_open = false
+            }
+        }
+    } else {
+        animate_to_target_f32(&gs.ui.quest_button_scale, UI.NORMAL_SCALE, dt, UI.HOVER_SCALE_SPEED)
     }
 
     target_alpha := gs.skills_system.menu_open ? 1.0 : 0.0
@@ -2034,6 +2055,42 @@ Quests_System :: struct {
     menu_open: bool,
 }
 
+Quest_UI_Config :: struct {
+    menu: struct {
+        pos_x: f32,
+        pos_y: f32,
+        size_x: f32,
+        size_y: f32,
+        background_sprite: Image_Id,
+    },
+    button: struct {
+        pos_x: f32,
+        pos_y: f32,
+        size_x: f32,
+        size_y: f32,
+        sprite: Image_Id,
+    },
+    quest_entry: struct {
+        start_offset_x: f32,
+        start_offset_y: f32,
+        spacing_y: f32,
+        size_x: f32,
+        size_y: f32,
+        name_offset_x: f32,
+        name_offset_y: f32,
+        reward_offset_x: f32,
+        reward_offset_y: f32,
+        next_level_offset_x: f32,
+        next_level_offset_y: f32,
+        select_button: struct {
+            offset_x: f32,
+            offset_y: f32,
+            size_x: f32,
+            size_y: f32,
+        },
+    },
+}
+
 init_quests_system :: proc() -> Quests_System {
     system := Quests_System {
         quests = make([dynamic]Quest),
@@ -2097,54 +2154,66 @@ check_quest_unlocks :: proc(skill: ^Skill) {
 }
 
 render_quests_ui :: proc() {
-    system := &gs.quests_system
-    if system == nil {
-        return
-    }
+    if !gs.quests_system.menu_open do return
 
-    menu_pos := v2{-620, 260}
-    menu_size := v2{300, 400}
-    draw_rect_aabb(menu_pos, menu_size, col = v4{0.1, 0.1, 0.1, 0.9}, z_layer = .ui)
+    cfg := gs.ui_config.quests
+    push_z_layer(.ui)
 
-    quest_y := menu_pos.y - 50
-    for &quest in system.quests {
+    menu_pos := v2{cfg.menu.pos_x, cfg.menu.pos_y}
+    menu_size := v2{cfg.menu.size_x, cfg.menu.size_y}
+
+    draw_sprite_with_size(
+        menu_pos,
+        menu_size,
+        cfg.menu.background_sprite,
+        pivot = .center_center,
+        z_layer = .ui,
+    )
+
+    entry_cfg := cfg.quest_entry
+    quest_y := menu_pos.y + entry_cfg.start_offset_y
+
+    for &quest in gs.quests_system.quests {
         if quest.is_unlocked {
-            render_quest_entry(&quest, v2{menu_pos.x + 10, quest_y}, system)
-            quest_y -= 80
+            render_quest_entry_configured(&quest, v2{menu_pos.x + entry_cfg.start_offset_x, quest_y})
+            quest_y -= entry_cfg.spacing_y
         }
     }
 }
 
-render_quest_entry :: proc(quest: ^Quest, pos: Vector2, system: ^Quests_System) {
-    is_active := system.active_quest == quest
+render_quest_entry_configured :: proc(quest: ^Quest, pos: Vector2) {
+    cfg := gs.ui_config.quests.quest_entry
+    is_active := gs.quests_system.active_quest == quest
     bg_color := is_active ? v4{0.3, 0.3, 0.3, 0.8} : v4{0.2, 0.2, 0.2, 0.8}
 
-    entry_size := v2{280, 70}
+    entry_size := v2{cfg.size_x, cfg.size_y}
     draw_rect_aabb(pos, entry_size, col = bg_color, z_layer = .ui)
 
-    name_pos := pos + v2{5, 5}
+    name_pos := pos + v2{cfg.name_offset_x, cfg.name_offset_y}
     draw_text(name_pos, fmt.tprintf("%s (Level %d)", quest.name, quest.level), z_layer = .ui)
 
-    reward_pos := pos + v2{5, -20}
+    reward_pos := pos + v2{cfg.reward_offset_x, cfg.reward_offset_y}
     draw_text(reward_pos, fmt.tprintf("Gold per tick: %d", quest.gold_per_tick[quest.level - 1]), z_layer = .ui)
 
     if !is_active {
-        button_pos := pos + v2{200, 5}
-        button_size := v2{70, 25}
+        button_pos := pos + v2{cfg.select_button.offset_x, cfg.select_button.offset_y}
+        button_size := v2{cfg.select_button.size_x, cfg.select_button.size_y}
+
         draw_rect_aabb(button_pos, button_size, col = v4{0.3, 0.5, 0.3, 1}, z_layer = .ui)
         text_pos := button_pos + v2{10, 5}
         draw_text(text_pos, "Select", z_layer = .ui)
 
         mouse_pos := mouse_pos_in_world_space()
         button_bounds := aabb_make(button_pos, button_size, Pivot.bottom_left)
+
         if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
-            system.active_quest = quest
-            system.timer = QUEST_TICK_TIME
+            gs.quests_system.active_quest = quest
+            gs.quests_system.timer = QUEST_TICK_TIME
         }
     }
 
     if quest.level < 5 {
-        next_level_pos := pos + v2{5, -45}
+        next_level_pos := pos + v2{cfg.next_level_offset_x, cfg.next_level_offset_y}
         req_skill_level := quest.required_skill_levels[quest.level]
         draw_text(next_level_pos, fmt.tprintf("Next level at %s level %d",
             gs.skills_system.skills[quest.required_skill].name, req_skill_level), z_layer = .ui)
@@ -2164,20 +2233,18 @@ render_active_quest_ui :: proc(quest: ^Quest) {
 }
 
 render_quest_menu_button :: proc() {
-    button_pos := v2{-620, 280}
-    button_size := v2{120, 30}
-    draw_rect_aabb(button_pos, button_size, col = v4{0.2, 0.2, 0.2, 1}, z_layer = .ui)
-    text_pos := button_pos + v2{10, 8}
-    draw_text(text_pos, "Quests Menu", z_layer = .ui)
+    cfg := gs.ui_config.quests.button
+    button_pos := v2{cfg.pos_x, cfg.pos_y}
+    button_size := v2{cfg.size_x, cfg.size_y} * gs.ui.quest_button_scale
 
-    mouse_pos := mouse_pos_in_world_space()
-    button_bounds := aabb_make(button_pos, button_size, Pivot.bottom_left)
-    if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
-        gs.quests_system.menu_open = !gs.quests_system.menu_open
-        if gs.quests_system.menu_open {
-            gs.skills_system.menu_open = false
-        }
-    }
+    draw_sprite_with_size(
+        button_pos,
+        button_size,
+        cfg.sprite,
+        pivot = .center_center,
+        xform = xform_scale(v2{gs.ui.quest_button_scale, gs.ui.quest_button_scale}),
+        z_layer = .ui,
+    )
 }
 
 //
@@ -2469,7 +2536,7 @@ draw_unlocked_skills :: proc(start_pos: Vector2, alpha: f32) {
     pos := v2{start_pos.x, content_top - spacing * 0.5} - v2{0, gs.ui.skills_scroll_pos}
 
     mouse_pos := mouse_pos_in_world_space()
-    // Debug print mouse position
+
     if key_just_pressed(.LEFT_MOUSE) {
         loggie("Mouse pos:", mouse_pos)
     }
