@@ -283,12 +283,48 @@ draw_sprite :: proc(pos: Vector2, img_id: Image_Id, pivot:= Pivot.bottom_left, x
 	image := images[img_id]
 	size := v2{auto_cast image.width, auto_cast image.height}
 
+	RES :: 256
+	p_scale := f32(RES) / max(f32(image.width), f32(image.height))
+
 	xform0 := Matrix4(1)
 	xform0 *= xform_translate(pos)
 	xform0 *= xform
+	xform0 *= xform_scale(v2{p_scale, p_scale})
 	xform0 *= xform_translate(size * -scale_from_pivot(pivot))
 
 	draw_rect_xform(xform0, size, img_id=img_id, color_override=color_override, z_layer=z_layer)
+}
+
+fit_size_to_square :: proc(target_size: Vector2) -> Vector2{
+    max_dim := max(target_size.x, target_size.y)
+    return Vector2{max_dim, max_dim}
+}
+
+draw_sprite_with_size :: proc(pos: Vector2, size := v2{0,0} , img_id: Image_Id, pivot:= Pivot.bottom_left, xform := Matrix4(1), color_override:= v4{0,0,0,0}, z_layer := ZLayer.nil) {
+	image := images[img_id]
+	size := size
+
+	RES :: 256
+	p_scale := f32(RES) / max(f32(image.width), f32(image.height))
+
+	xform0 := Matrix4(1)
+	xform0 *= xform_translate(pos)
+	xform0 *= xform
+	xform0 *= xform_scale(v2{p_scale, p_scale})
+	xform0 *= xform_translate(size * -scale_from_pivot(pivot))
+
+	draw_rect_xform(xform0, size, img_id=img_id, color_override=color_override, z_layer=z_layer)
+}
+
+draw_nores_sprite_with_size :: proc(pos: Vector2, size: Vector2, img_id: Image_Id, pivot := Pivot.bottom_left, xform := Matrix4(1), color_override := v4{0,0,0,0}, z_layer := ZLayer.nil) {
+    image := images[img_id]
+
+    xform0 := Matrix4(1)
+    xform0 *= xform_translate(pos)
+    xform0 *= xform
+    xform0 *= xform_translate(size * -scale_from_pivot(pivot))
+
+    draw_rect_xform(xform0, size, img_id=img_id, color_override=color_override, z_layer=z_layer)
 }
 
 draw_sprite_in_rect :: proc(img_id: Image_Id, pos: Vector2, size: Vector2, xform := Matrix4(1), col := COLOR_WHITE, color_override := v4{0,0,0,0}, z_layer := ZLayer.nil){
@@ -948,14 +984,14 @@ render :: proc() {
 
 draw_player_at_pos :: proc(en: Entity, pos: Vector2) {
     xform := Matrix4(1)
-    xform *= xform_scale(v2{3.2, 3.2})
+    xform *= xform_scale(v2{0.35, 0.35})
 
     draw_sprite(pos, .player_move1, pivot=.bottom_center, xform = xform, z_layer = .player)
 }
 
 draw_dummy_at_pos :: proc(en: Entity){
     xform := Matrix4(1)
-    xform *= xform_scale(v2{2.5,2.5})
+    xform *= xform_scale(v2{0.35, 0.35})
 
     health_percent := en.health / en.max_health
 
@@ -976,7 +1012,7 @@ draw_arrow_at_pos :: proc(en: ^Entity){
     xform := Matrix4(1)
     xform *= xform_translate(en.pos)
     xform *= xform_rotate(en.rotation)
-    xform *= xform_scale(v2{2.0, 2.0})
+    xform *= xform_scale(v2{0.12, 0.12})
 
     draw_sprite(v2{0,0}, .arrow, pivot = .center_center, xform = xform, z_layer = .player)
 }
@@ -1016,7 +1052,7 @@ mouse_pos_in_world_space :: proc() -> Vector2 {
 //
 // :dummies
 DUMMY_MAX_HEALTH :: 100.0
-ARROW_DAMAGE :: 200.0
+ARROW_DAMAGE :: 200.0 // 20
 
 spawn_dummy :: proc(position: Vector2) -> ^Entity {
     dummy := entity_create()
@@ -2220,6 +2256,8 @@ Skills_UI_Config :: struct {
             offset_y: f32,
             size_x: f32,
             size_y: f32,
+            bounds_x: f32,
+            bounds_y: f32,
             selected_sprite: Image_Id,
             unselected_sprite: Image_Id,
         },
@@ -2361,7 +2399,10 @@ render_skills_ui :: proc() {
 
     menu_pos := v2{cfg.menu.pos_x, cfg.menu.pos_y}
     menu_size := v2{cfg.menu.size_x, cfg.menu.size_y}
-    draw_sprite(menu_pos, cfg.menu.background_sprite,
+    draw_sprite_with_size(
+        menu_pos,
+        menu_size,
+        cfg.menu.background_sprite,
         pivot = .center_center,
         color_override = v4{0,0,0,1-alpha})
 
@@ -2443,9 +2484,12 @@ draw_unlocked_skills :: proc(start_pos: Vector2, alpha: f32) {
             radio_pos := pos + v2{cfg.radio_button.offset_x, cfg.radio_button.offset_y}
             radio_sprite := is_active ? cfg.radio_button.selected_sprite : cfg.radio_button.unselected_sprite
             radio_size := v2{cfg.radio_button.size_x, cfg.radio_button.size_y}
+            fitted_size := fit_size_to_square(radio_size)
+            radio_bounds := v2{cfg.radio_button.bounds_x, cfg.radio_button.bounds_y}
 
-            draw_sprite(
+            draw_nores_sprite_with_size(
                 radio_pos,
+                fitted_size,
                 radio_sprite,
                 pivot = .center_center,
                 color_override = v4{1,1,1,0},
@@ -2453,7 +2497,7 @@ draw_unlocked_skills :: proc(start_pos: Vector2, alpha: f32) {
             )
 
             debug_button := false
-            click_area := aabb_make(radio_pos, radio_size, Pivot.center_center)
+            click_area := aabb_make(radio_pos, radio_size + radio_bounds, Pivot.center_center)
 
             if debug_button {
                 draw_rect_aabb_actually(click_area, col=v4{1,0,0,0.2}, z_layer=.ui)
@@ -2789,8 +2833,9 @@ render_skill_menu_button :: proc() {
     button_pos := v2{0, cfg.pos_y}
     button_size := v2{cfg.size_x, cfg.size_y} * gs.ui.skills_button_scale
 
-    draw_sprite(
+    draw_sprite_with_size(
         button_pos,
+        button_size,
         cfg.sprite,
         pivot = .center_center,
         xform = xform_scale(v2{gs.ui.skills_button_scale, gs.ui.skills_button_scale}),

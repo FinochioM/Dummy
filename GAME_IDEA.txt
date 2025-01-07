@@ -41,3 +41,7 @@ Skills
 Quests
  - At first quests give gold and have 5 levels.
  - Later quests also give other buffs besides gold. Mostly giving passive XP.
+
+ draw_sprite_with_size ->
+    - 256 == 512
+    - 1024 == 128
