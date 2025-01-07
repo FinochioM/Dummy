@@ -828,6 +828,8 @@ Game_State :: struct {
         skills_hover_tooltip_skill: ^Skill,
         skills_menu_pos: Vector2,
         last_mouse_pos: Vector2,
+        skills_scroll_pos: f32,
+        skills_scroll_initialized: bool,
     },
 }
 gs: ^Game_State
@@ -2336,17 +2338,6 @@ check_skills_unlock :: proc(system: ^Skills_System) {
     }
 }
 
-unlock_skill :: proc(system: ^Skills_System, skill: ^Skill) {
-    cost := get_skill_cost(skill.type)
-    if system.gold >= cost {
-        system.gold -= cost
-        skill.is_unlocked = true
-        if system.active_skill == nil {
-            system.active_skill = skill
-        }
-    }
-}
-
 get_skill_cost :: proc(type: Skill_Type) -> int {
     switch type {
         case .nil: return 0
@@ -2392,64 +2383,192 @@ render_skills_ui :: proc() {
 
 draw_unlocked_skills :: proc(start_pos: Vector2, alpha: f32) {
     cfg := gs.ui_config.skills.unlocked_skills
+    menu_cfg := gs.ui_config.skills.menu
     push_z_layer(.ui)
 
-    pos := start_pos
-    spacing := v2{0, cfg.spacing_y}
+    content_height := menu_cfg.size_y * 0.7
+    content_width := menu_cfg.size_x * 0.8
 
-    for &skill in gs.skills_system.skills {
+    spacing := cfg.spacing_y
+    visible_height := content_height
+
+    unlocked_count := 0
+    total_content_height := 0.0
+    for skill in gs.skills_system.skills {
+        if skill.is_unlocked {
+            unlocked_count += 1
+            total_content_height += f64(spacing)
+        }
+    }
+
+    if unlocked_count == 0 do return
+
+    if !gs.ui.skills_scroll_initialized {
+        gs.ui.skills_scroll_pos = 0
+        gs.ui.skills_scroll_initialized = true
+    }
+
+    if content_bounds := aabb_make(start_pos, v2{content_width, content_height}, Pivot.center_center);
+       aabb_contains(content_bounds, mouse_pos_in_screen_space()) {
+        scroll_speed := 40.0
+        if key_down(.UP) {
+            gs.ui.skills_scroll_pos = max(0, gs.ui.skills_scroll_pos - f32(scroll_speed) * f32(sapp.frame_duration()))
+        }
+        if key_down(.DOWN) {
+            max_scroll := max(0, total_content_height - f64(visible_height))
+            gs.ui.skills_scroll_pos = min(f32(max_scroll), gs.ui.skills_scroll_pos + f32(scroll_speed) * f32(sapp.frame_duration()))
+        }
+    }
+
+    content_top := start_pos.y + content_height * 0.5
+    content_bottom := start_pos.y - content_height * 0.5
+
+    pos := v2{start_pos.x, content_top - spacing * 0.5} - v2{0, gs.ui.skills_scroll_pos}
+
+    for skill, i in gs.skills_system.skills {
         if !skill.is_unlocked do continue
+        if pos.y + spacing < content_bottom || pos.y > content_top do continue
 
-        is_active := gs.skills_system.active_skill == &skill
+        is_active := gs.skills_system.active_skill == &gs.skills_system.skills[i]
 
-        radio_pos := pos + v2{cfg.radio_button.offset_x, cfg.radio_button.offset_y}
-        radio_sprite := is_active ? cfg.radio_button.selected_sprite : cfg.radio_button.unselected_sprite
-        draw_sprite(
-            radio_pos,
-            radio_sprite,
-            pivot = .center_center,
-            color_override = v4{1,1,1,0},
-            z_layer = .ui
-        )
+        if pos.y <= content_top && pos.y >= content_bottom {
+            radio_pos := pos + v2{cfg.radio_button.offset_x, cfg.radio_button.offset_y}
+            radio_sprite := is_active ? cfg.radio_button.selected_sprite : cfg.radio_button.unselected_sprite
+            draw_sprite(
+                radio_pos,
+                radio_sprite,
+                pivot = .center_center,
+                color_override = v4{1,1,1,0},
+                z_layer = .ui
+            )
 
-        name_pos := pos + v2{cfg.skill_name.offset_x, cfg.skill_name.offset_y}
-        draw_text(
-            name_pos,
-            skill.name,
-            col = Colors.text * v4{1,1,1,alpha},
-            scale = auto_cast cfg.skill_name.scale,
-            pivot = .center_left,
-            z_layer = .ui
-        )
+            name_pos := pos + v2{cfg.skill_name.offset_x, cfg.skill_name.offset_y}
+            draw_text(
+                name_pos,
+                skill.name,
+                col = Colors.text * v4{1,1,1,alpha},
+                scale = auto_cast cfg.skill_name.scale,
+                pivot = .center_left,
+                z_layer = .ui
+            )
 
-        level_pos := pos + v2{cfg.level_text.offset_x, cfg.level_text.offset_y}
-        draw_text(
-            level_pos,
-            fmt.tprintf("Level %d", skill.level),
-            col = Colors.text * v4{1,1,1,alpha},
-            scale = auto_cast cfg.level_text.scale,
-            pivot = .center_left,
-            z_layer = .ui
-        )
+            level_pos := pos + v2{cfg.level_text.offset_x, cfg.level_text.offset_y}
+            draw_text(
+                level_pos,
+                fmt.tprintf("Level %d", skill.level),
+                col = Colors.text * v4{1,1,1,alpha},
+                scale = auto_cast cfg.level_text.scale,
+                pivot = .center_left,
+                z_layer = .ui
+            )
 
-        radio_size := v2{cfg.radio_button.size_x, cfg.radio_button.size_y}
-        click_area := aabb_make(radio_pos, radio_size, Pivot.center_center)
-
-        if aabb_contains(click_area, mouse_pos_in_screen_space()) {
-            gs.ui.skills_hover_tooltip_active = true
-            gs.ui.skills_hover_tooltip_skill = &skill
-
-            tooltip_cfg := gs.ui_config.skills.tooltip
-            tooltip_pos := pos + v2{tooltip_cfg.offset_x, tooltip_cfg.offset_y}
-            draw_skill_tooltip(&skill, tooltip_pos)
-
-            if key_just_pressed(.LEFT_MOUSE) {
-                gs.skills_system.active_skill = &skill
+            radio_size := v2{cfg.radio_button.size_x, cfg.radio_button.size_y}
+            click_area := aabb_make(radio_pos, radio_size, Pivot.center_center)
+            if aabb_contains(click_area, mouse_pos_in_screen_space()) {
+                gs.ui.skills_hover_tooltip_active = true
+                gs.ui.skills_hover_tooltip_skill = &gs.skills_system.skills[i]
+                tooltip_cfg := gs.ui_config.skills.tooltip
+                tooltip_pos := pos + v2{tooltip_cfg.offset_x, tooltip_cfg.offset_y}
+                draw_skill_tooltip(&gs.skills_system.skills[i], tooltip_pos)
+                if key_just_pressed(.LEFT_MOUSE) {
+                    gs.skills_system.active_skill = &gs.skills_system.skills[i]
+                }
             }
         }
 
-        pos += spacing
+        pos.y -= spacing
     }
+
+    if f32(total_content_height) > visible_height {
+        scrollbar_width := 8.0
+        scrollbar_height := content_height
+        scrollbar_pos := v2{
+            start_pos.x + content_width * 0.5 + f32(scrollbar_width),
+            start_pos.y,
+        }
+
+        draw_rect_aabb(
+            scrollbar_pos,
+            v2{f32(scrollbar_width), scrollbar_height},
+            col = v4{0.2, 0.2, 0.2, alpha},
+            z_layer = .ui,
+        )
+
+        handle_ratio := visible_height / f32(total_content_height)
+        handle_height := scrollbar_height * handle_ratio
+        handle_pos_ratio := gs.ui.skills_scroll_pos / (f32(total_content_height) - visible_height)
+        handle_y_offset := (scrollbar_height - handle_height) * handle_pos_ratio
+
+        handle_pos := scrollbar_pos - v2{0, scrollbar_height * 0.5 - handle_height * 0.5} + v2{0, handle_y_offset}
+        draw_rect_aabb(
+            handle_pos,
+            v2{f32(scrollbar_width), handle_height},
+            col = v4{0.4, 0.4, 0.4, alpha},
+            z_layer = .ui,
+        )
+    }
+}
+
+unlock_skill :: proc(system: ^Skills_System, skill: ^Skill) {
+    cost := get_skill_cost(skill.type)
+    if system.gold >= cost {
+        system.gold -= cost
+
+        if !any_skill_unlocked(system) {
+            skill.is_unlocked = true
+            if system.active_skill == nil {
+                system.active_skill = skill
+            }
+            return
+        }
+
+        old_skills := make([dynamic]Skill, len(system.skills))
+        defer delete(old_skills)
+
+        copy(old_skills[:], system.skills[:])
+        clear(&system.skills)
+
+        for s in old_skills {
+            if s.is_unlocked {
+                append(&system.skills, s)
+            }
+        }
+
+        for &s in old_skills {
+            if s.type == skill.type {
+                s.is_unlocked = true
+                append(&system.skills, s)
+            }
+        }
+
+        for s in old_skills {
+            if !s.is_unlocked && s.type != skill.type {
+                append(&system.skills, s)
+            }
+        }
+
+        if system.active_skill == nil {
+            system.active_skill = skill
+        }
+    }
+}
+
+find_next_locked_skill :: proc(system: ^Skills_System) -> ^Skill {
+    for &skill in system.skills {
+        if !skill.is_unlocked {
+            return &skill
+        }
+    }
+    return nil
+}
+
+any_skill_unlocked :: proc(system: ^Skills_System) -> bool {
+    for skill in system.skills {
+        if skill.is_unlocked {
+            return true
+        }
+    }
+    return false
 }
 
 draw_skill_icon :: proc(skill: ^Skill, pos: Vector2, is_active: bool, alpha: f32) {
@@ -2480,6 +2599,13 @@ draw_button :: proc(pos: Vector2, size: Vector2, text: string, color: Vector4, a
 
 draw_next_skill_panel :: proc(skill: ^Skill, pos: Vector2, alpha: f32) {
     if skill == nil do return
+
+    if skill.is_unlocked {
+        next_skill := find_next_locked_skill(&gs.skills_system)
+        if next_skill == nil do return
+        skill := next_skill
+    }
+
     cfg := gs.ui_config.skills.next_skill
     push_z_layer(.ui)
 

@@ -31,7 +31,7 @@
     },
     "unlocked_skills": {
       "start_offset_x": -210,
-      "start_offset_y": 150,
+      "start_offset_y": 50,
       "spacing_y": 40,
       "radio_button": {
         "offset_x": 0,
