@@ -556,10 +556,22 @@ draw_quad_projected :: proc(
 //
 Image_Id :: enum {
 	nil,
-	player_move1,
+	player_attack1,
+	player_attack2,
+	player_attack3,
+	player_attack4,
+	player_attack5,
+	player_attack6,
+	player_attack7,
+	player_attack8,
+	player_attack9,
 	background,
 	foreground,
-	dummy,
+	dummy_hit1,
+	dummy_hit2,
+	dummy_hit3,
+	dummy_hit4,
+	dummy_hit5,
 	arrow,
 	skills_button,
 	skills_panel_bg,
@@ -882,6 +894,7 @@ Game_State :: struct {
     quests_system: Quests_System,
     ui: struct {
         skills_button_scale: f32,
+
         quest_button_scale: f32,
         skills_menu_alpha: f32,
         skills_tooltip_alpha: f32,
@@ -945,6 +958,7 @@ update :: proc() {
             #partial switch en.kind {
                 case .player: update_player(&en, f32(dt))
                 case .arrow: update_arrow(&en, f32(dt))
+                case .dummy: update_current_animation(&en.animations, f32(dt))
             }
         }
 	}
@@ -983,10 +997,10 @@ render :: proc() {
 		if .allocated in en.flags {
 			#partial switch en.kind {
 				case .player: {
-				    draw_player_at_pos(en, v2{-440, -320})
+				    draw_player_at_pos(&en, v2{-440, -320})
 				}
 				case .dummy: {
-				    draw_dummy_at_pos(en)
+				    draw_dummy_at_pos(&en)
 				}
 				case .arrow: {
 				    draw_arrow_at_pos(&en)
@@ -1004,6 +1018,17 @@ render :: proc() {
         } else if gs.quests_system.menu_open {
             render_quests_ui()
         }
+
+        cfg := gs.ui_config.gold_display
+        pos := v2{cfg.pos_x, cfg.pos_y}
+
+        text_pos := pos + v2{cfg.text_offset_x, cfg.text_offset_y}
+        draw_text(
+            text_pos,
+            fmt.tprintf("%d Gold", gs.skills_system.gold),
+            scale = auto_cast cfg.text_scale,
+            z_layer = .ui,
+        )
     }
 
     //draw_text(v2{-200, 100}, "Dummy", scale = 2.0, z_layer = .ui)
@@ -1011,20 +1036,29 @@ render :: proc() {
 	gs.ticks += 1
 }
 
-draw_player_at_pos :: proc(en: Entity, pos: Vector2) {
+draw_player_at_pos :: proc(en: ^Entity, pos: Vector2) {
     xform := Matrix4(1)
     xform *= xform_scale(v2{0.35, 0.35})
 
-    draw_sprite(pos, .player_move1, pivot=.bottom_center, xform = xform, z_layer = .player)
+    if en.animations.current_animation == "" {
+        draw_sprite(pos, .player_attack1, pivot = .bottom_center, xform=xform, z_layer=.player)
+    } else {
+        draw_current_animation(&en.animations, pos, pivot = .bottom_center, xform=xform, z_layer=.player)
+    }
 }
 
-draw_dummy_at_pos :: proc(en: Entity){
+draw_dummy_at_pos :: proc(en: ^Entity){
     xform := Matrix4(1)
     xform *= xform_scale(v2{0.35, 0.35})
 
     health_percent := en.health / en.max_health
 
-    draw_sprite(en.pos, .dummy, pivot = .bottom_center, xform = xform,z_layer = .player)
+    if en.animations.current_animation == "" {
+        draw_sprite(v2{en.pos.x, en.pos.y - 10}, .dummy_hit1, pivot = .bottom_center, xform=xform, z_layer=.player)
+    }else{
+        draw_current_animation(&en.animations, v2{en.pos.x, en.pos.y - 10}, pivot = .bottom_center, xform = xform, z_layer = .player)
+    }
+
     if en.health < en.max_health {
         bar_width := 64.0
         bar_height := 8.0
@@ -1084,7 +1118,7 @@ mouse_pos_in_world_space :: proc() -> Vector2 {
 //
 // :dummies
 DUMMY_MAX_HEALTH :: 100.0
-ARROW_DAMAGE :: 200.0 // 20
+ARROW_DAMAGE :: 20.0 // 20
 
 spawn_dummy :: proc(position: Vector2) -> ^Entity {
     dummy := entity_create()
@@ -1100,6 +1134,7 @@ spawn_dummy :: proc(position: Vector2) -> ^Entity {
 // :player
 update_player :: proc(player: ^Entity, dt: f32) {
     player.shoot_cooldown -= dt
+    update_current_animation(&player.animations, dt)
 
     if player.shoot_cooldown <= 0 {
         target := find_random_target()
@@ -1186,6 +1221,7 @@ update_arrow :: proc(e: ^Entity, dt: f32) {
 }
 
 shoot_arrow :: proc(player: ^Entity, target: ^Entity){
+    reset_and_play_animation(&player.animations, "shoot")
     arrow := entity_create()
     if arrow == nil do return
 
@@ -1256,6 +1292,10 @@ damage_entity :: proc(e: ^Entity, base_damage: f32) {
         }
     }
 
+    if e.kind == .dummy {
+        reset_and_play_animation(&e.animations, "hit")
+    }
+
     e.health -= damage
     if e.health <= 0 {
         entity_destroy(e)
@@ -1320,6 +1360,21 @@ entity_destroy :: proc(entity: ^Entity) {
         }
     }
 
+    if gs.skills_system.is_unlocked {
+            base_xp := 50
+            xp_multiplier := calculate_xp_boost(gs.skills_system.active_skill)
+            total_xp := int(f32(base_xp) * xp_multiplier)
+
+            pos := entity.pos + v2{0, 50}
+            draw_text(
+                pos,
+                fmt.tprintf("+%d XP", total_xp),
+                scale = 1.5,
+                col = v4{0, 1, 0, 1},
+                z_layer = .ui
+            )
+        }
+
 	mem.set(entity, 0, size_of(Entity))
 }
 
@@ -1330,6 +1385,23 @@ entity_destroy :: proc(entity: ^Entity) {
 setup_player :: proc(e: ^Entity) {
 	e.kind = .player
     e.flags |= { .allocated }
+
+    animations := create_animation_collection()
+
+    shoot_frames: []Image_Id = {
+        .player_attack1, .player_attack2, .player_attack3, .player_attack4,
+        .player_attack5, .player_attack6, .player_attack7, .player_attack8,
+        .player_attack9,
+    }
+    shoot_anim := create_animation(
+        shoot_frames,
+        0.1, // Duration
+        false, // Don't loop
+        "shoot"
+    )
+    add_animation(&animations, shoot_anim)
+
+    e.animations = animations
 }
 
 setup_dummy :: proc(e: ^Entity){
@@ -1337,6 +1409,17 @@ setup_dummy :: proc(e: ^Entity){
     e.flags |= { .allocated }
     e.health = DUMMY_MAX_HEALTH
     e.max_health = DUMMY_MAX_HEALTH
+
+    animations := create_animation_collection()
+
+    hit_frames := []Image_Id{
+        .dummy_hit1, .dummy_hit2, .dummy_hit3, .dummy_hit4,
+        .dummy_hit5, .dummy_hit1,
+    }
+    hit_anim := create_animation(hit_frames, 0.08, false, "hit")
+    add_animation(&animations, hit_anim)
+
+    e.animations = animations
 
     dummy_size := v2{32, 32}
     e.aabb = aabb_make(e.pos, dummy_size, Pivot.bottom_center)
@@ -1680,10 +1763,10 @@ get_current_frame :: proc(anim: ^Animation) -> Image_Id {
     return frame
 }
 
-draw_animated_sprite :: proc(pos: Vector2, anim: ^Animation, pivot := Pivot.bottom_left, xform := Matrix4(1), color_override := v4{0,0,0,0}){
+draw_animated_sprite :: proc(pos: Vector2, anim: ^Animation, pivot := Pivot.bottom_left, xform := Matrix4(1), color_override := v4{0,0,0,0}, z_layer := ZLayer.nil) {
     if anim == nil do return
     current_frame := get_current_frame(anim)
-    draw_sprite(pos, current_frame, pivot, xform, color_override)
+    draw_sprite(pos, current_frame, pivot, xform, color_override, z_layer)
 }
 
 play_animation :: proc(anim: ^Animation){
@@ -1768,12 +1851,12 @@ update_current_animation :: proc(collection: ^Animation_Collection, delta_t: f32
     }
 }
 
-draw_current_animation :: proc(collection: ^Animation_Collection, pos: Vector2, pivot := Pivot.bottom_left, xform := Matrix4(1), color_override := v4{0,0,0,0}) {
+draw_current_animation :: proc(collection: ^Animation_Collection, pos: Vector2, pivot := Pivot.bottom_left, xform := Matrix4(1), color_override := v4{0,0,0,0}, z_layer := ZLayer.nil) {
     if collection == nil || collection.current_animation == "" {
         return
     }
     if anim, ok := &collection.animations[collection.current_animation]; ok {
-        draw_animated_sprite(pos, anim, pivot, xform, color_override)
+        draw_animated_sprite(pos, anim, pivot, xform, color_override, z_layer)
     }
 }
 
@@ -1881,6 +1964,13 @@ aabb_size :: proc(aabb: AABB) -> Vector2 {
 UI_Config :: struct {
    skills: Skills_UI_Config,
    quests: Quest_UI_Config,
+   gold_display: struct {
+        pos_x: f32,
+        pos_y: f32,
+        text_offset_x: f32,
+        text_offset_y: f32,
+        text_scale: f32,
+    },
 }
 
 UI_Hot_Reload :: struct {
@@ -2363,6 +2453,8 @@ Skills_UI_Config :: struct {
         button_offset_y: f32,
         button_size_x: f32,
         button_size_y: f32,
+        button_bnds_x: f32,
+        button_bnds_y: f32,
     },
     unlocked_skills: struct {
         start_offset_x: f32,
@@ -2836,9 +2928,11 @@ draw_next_skill_panel :: proc(skill: ^Skill, pos: Vector2, alpha: f32) {
 
     button_pos := pos + v2{cfg.button_offset_x, cfg.button_offset_y}
     button_size := v2{cfg.button_size_x, cfg.button_size_y}
+    bounds_act := v2{cfg.button_bnds_x, cfg.button_bnds_y}
 
-    draw_sprite(
+    draw_sprite_with_size(
         button_pos,
+        button_size,
         .next_skill_button_bg,
         pivot = .center_center,
         color_override = can_afford ? v4{1,1,1,0} : v4{1,0.5,0.5,0},
@@ -2846,7 +2940,7 @@ draw_next_skill_panel :: proc(skill: ^Skill, pos: Vector2, alpha: f32) {
     )
 
     mouse_pos := mouse_pos_in_world_space()
-    button_bounds := aabb_make(button_pos, button_size, Pivot.center_center)
+    button_bounds := aabb_make(button_pos, bounds_act, Pivot.center_center)
     hover := aabb_contains(button_bounds, mouse_pos)
 
     if hover && can_afford && key_just_pressed(.LEFT_MOUSE) {

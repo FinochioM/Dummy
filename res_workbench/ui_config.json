@@ -24,10 +24,12 @@
       "name_offset_y": 0,
       "cost_offset_x": -120,
       "cost_offset_y": -30,
-      "button_offset_x": 85,
+      "button_offset_x": 70,
       "button_offset_y": -40,
-      "button_size_x": 100,
-      "button_size_y": 30
+      "button_size_x": 25,
+      "button_size_y": 8
+      "button_bnds_x": 100,
+      "button_bnds_y": 30,
     },
     "unlocked_skills": {
       "start_offset_x": -210,
@@ -100,6 +102,15 @@
         "size_x": 70,
         "size_y": 25
       }
+    },
+
+  "gold_display": {
+    "pos_x": -600,
+    "pos_y": 340,
+    "icon_size": 24,
+    "text_offset_x": 30,
+    "text_offset_y": 0,
+    "text_scale": 1.2
     }
   }
 }
