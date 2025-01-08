@@ -980,17 +980,21 @@ render :: proc() {
     draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.foreground, z_layer = .foreground)
 
     if !has_active_dummy() {
-        button_pos := v2{-BUTTON_WIDTH / 2, 200}
+        cfg := gs.ui_config.spawner
 
-        draw_rect_aabb(
+        button_pos := v2{cfg.pos_x, cfg.pos_y}
+        button_size := v2{cfg.size_x, cfg.size_y}
+
+        draw_sprite_with_size(
             button_pos,
-            v2{BUTTON_WIDTH, BUTTON_HEIGHT},
-            col = v4{0.2, 0.2, 0.2, 1},
+            button_size,
+            cfg.sprite,
+            pivot = .center_center,
             z_layer = .ui,
         )
 
-        text_pos := button_pos + v2{BUTTON_WIDTH / 2 - 70, BUTTON_HEIGHT / 2 - 10}
-        draw_text(text_pos, "Spawn Dummy", scale = 2.0, z_layer = .ui)
+        text_pos := v2{cfg.txt_pos_x, cfg.txt_pos_y}
+        draw_text(text_pos, "Spawn Dummy", scale = 1.0, z_layer = .ui)
     }
 
 	for &en in gs.entities {
@@ -1971,6 +1975,17 @@ UI_Config :: struct {
         text_offset_y: f32,
         text_scale: f32,
     },
+    spawner: struct {
+        pos_x: f32,
+        pos_y: f32,
+        size_x: f32,
+        size_y: f32,
+        bounds_x: f32,
+        bounds_y: f32,
+        txt_pos_x: f32,
+        txt_pos_y: f32,
+        sprite: Image_Id,
+    }
 }
 
 UI_Hot_Reload :: struct {
@@ -2146,17 +2161,15 @@ check_spawn_button :: proc() {
         return
     }
 
-    button_pos := v2{-BUTTON_WIDTH/2, 200}
+
+    cfg := gs.ui_config.spawner
+    bounds_act := v2{cfg.bounds_x, cfg.bounds_y}
+
     mouse_pos := mouse_pos_in_world_space()
+    button_bounds := aabb_make(v2{cfg.pos_x, cfg.pos_y}, bounds_act, Pivot.center_center)
+    hover := aabb_contains(button_bounds, mouse_pos)
 
-    button_bounds := v4{
-        button_pos.x,
-        button_pos.y,
-        button_pos.x + BUTTON_WIDTH,
-        button_pos.y + BUTTON_HEIGHT,
-    }
-
-    if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
+    if hover &&  key_just_pressed(.LEFT_MOUSE) {
         spawn_dummy(v2{300, -320})
     }
 }
