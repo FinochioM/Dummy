@@ -108,12 +108,17 @@
 
 
   "gold_display": {
-    "pos_x": 100,
-    "pos_y": 100
+    "pos_x": -600,
+    "pos_y": 250
     "icon_size": 24,
     "text_offset_x": 30,
-    "text_offset_y": 0,
-    "text_scale": 1.2
+    "text_offset_y": 60,
+    "text_scale": 1.2,
+    "sprite_pos_x": -600,
+    "sprite_pos_y": 320,
+    "sprite_size_x": 6,
+    "sprite_size_y": 4,
+    "sprite": "coin",
     },
 
 
@@ -123,8 +128,8 @@
     "pos_y": -200,
     "size_x": 35,
     "size_y": 10,
-    "bounds_x": 40,
-    "bounds_y": 15,
+    "bounds_x": 150,
+    "bounds_y": 40,
     "txt_pos_x": -52,
     "txt_pos_y": -205,
     "sprite": "next_skill_button_bg",

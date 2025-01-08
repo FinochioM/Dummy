@@ -583,6 +583,7 @@ Image_Id :: enum {
     radio_selected,
     radio_unselected,
     quests_button,
+    coin,
 }
 
 Image :: struct {
@@ -1026,6 +1027,17 @@ render :: proc() {
         cfg := gs.ui_config.gold_display
         pos := v2{cfg.pos_x, cfg.pos_y}
 
+        sprite_pos := v2{cfg.sprite_pos_x, cfg.sprite_pos_y}
+        sprite_size := v2{cfg.sprite_size_x, cfg.sprite_size_y}
+
+        draw_sprite_with_size(
+            sprite_pos,
+            sprite_size,
+            cfg.sprite,
+            pivot = .center_center,
+            z_layer = .ui,
+        )
+
         text_pos := pos + v2{cfg.text_offset_x, cfg.text_offset_y}
         draw_text(
             text_pos,
@@ -1122,7 +1134,7 @@ mouse_pos_in_world_space :: proc() -> Vector2 {
 //
 // :dummies
 DUMMY_MAX_HEALTH :: 100.0
-ARROW_DAMAGE :: 20.0 // 20
+ARROW_DAMAGE :: 200.0 // 20
 
 spawn_dummy :: proc(position: Vector2) -> ^Entity {
     dummy := entity_create()
@@ -1974,6 +1986,11 @@ UI_Config :: struct {
         text_offset_x: f32,
         text_offset_y: f32,
         text_scale: f32,
+        sprite_pos_x: f32,
+        sprite_pos_y: f32,
+        sprite_size_x: f32,
+        sprite_size_y: f32,
+        sprite: Image_Id,
     },
     spawner: struct {
         pos_x: f32,
