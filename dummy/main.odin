@@ -942,11 +942,6 @@ update :: proc() {
     height := sapp.height()
     update_projection(int(width), int(height))
 
-	//draw_frame.coord_space.proj = matrix_ortho3d_f32(window_w * -0.5, window_w * 0.5, window_h * -0.5, window_h * 0.5, -1, 1)
-
-	//draw_frame.coord_space.camera = Matrix4(1)
-	//draw_frame.coord_space.camera *= xform_scale(f32(window_h) / f32(game_res_h))
-
 	for &en in gs.entities {
 		en.frame = {}
 	}
@@ -969,6 +964,7 @@ update :: proc() {
 
 	check_spawn_button()
 	update_quests_system(&gs.quests_system, f32(dt))
+    update_floating_texts(f32(dt))
 	update_ui_state(gs, f32(dt))
 
 	gs.ticks += 1
@@ -1017,6 +1013,7 @@ render :: proc() {
     if gs.skills_system.is_unlocked {
         render_skill_menu_button()
         render_quest_menu_button()
+        render_floating_texts()
 
         if gs.skills_system.menu_open {
             render_skills_ui()
@@ -1134,7 +1131,7 @@ mouse_pos_in_world_space :: proc() -> Vector2 {
 //
 // :dummies
 DUMMY_MAX_HEALTH :: 100.0
-ARROW_DAMAGE :: 200.0 // 20
+ARROW_DAMAGE :: 20.0 // 20
 
 spawn_dummy :: proc(position: Vector2) -> ^Entity {
     dummy := entity_create()
@@ -1150,25 +1147,33 @@ spawn_dummy :: proc(position: Vector2) -> ^Entity {
 // :player
 update_player :: proc(player: ^Entity, dt: f32) {
     player.shoot_cooldown -= dt
-    update_current_animation(&player.animations, dt)
+    target := find_random_target()
 
-    if player.shoot_cooldown <= 0 {
-        target := find_random_target()
-        if target != nil {
-            shoot_arrow(player, target)
-
-            base_cooldown := SHOOT_COOLDOWN
-            if system := &gs.skills_system; system.is_unlocked {
-                for &skill in system.skills {
-                    if skill.is_unlocked && skill.type == .speed_boost {
-                        speed_bonus := calculate_skill_bonus(&skill)
-                        base_cooldown *= (1.0 - f64(speed_bonus))
-                    }
-                }
+    if player.animations.current_animation == "shoot" {
+        anim := &player.animations.animations["shoot"]
+        if anim.current_frame == 8 {
+            if target != nil && player.arrow_count < player.max_arrows {
+                shoot_arrow(player, target)
             }
-            player.shoot_cooldown = f32(base_cooldown)
         }
     }
+
+    if target != nil && player.shoot_cooldown <= 0 && player.animations.current_animation == "" {
+        base_cooldown := SHOOT_COOLDOWN
+        if system := &gs.skills_system; system.is_unlocked {
+            for &skill in system.skills {
+                if skill.is_unlocked && skill.type == .speed_boost {
+                    speed_bonus := calculate_skill_bonus(&skill)
+                    base_cooldown *= (1.0 - f64(speed_bonus))
+                }
+            }
+        }
+        anim_speed := SHOOT_COOLDOWN / base_cooldown
+        reset_and_play_animation(&player.animations, "shoot", f32(anim_speed))
+        player.shoot_cooldown = f32(base_cooldown)
+    }
+
+    update_current_animation(&player.animations, dt)
 }
 
 find_random_target :: proc() -> ^Entity{
@@ -1237,12 +1242,16 @@ update_arrow :: proc(e: ^Entity, dt: f32) {
 }
 
 shoot_arrow :: proc(player: ^Entity, target: ^Entity){
-    reset_and_play_animation(&player.animations, "shoot")
+    if player.arrow_count >= player.max_arrows {
+        return
+    }
+
     arrow := entity_create()
     if arrow == nil do return
 
     shoot_pos := v2{-440, -320} + v2{30, 40}
-    setup_arrow(arrow, shoot_pos, target.pos + v2{0, 15})
+    setup_arrow(arrow, shoot_pos, target.pos + v2{0, 30})
+    player.arrow_count += 1
 }
 
 //
@@ -1273,6 +1282,8 @@ Entity :: struct {
 	},
 	arrow_data: Arrow_Data,
 	shoot_cooldown: f32,
+	arrow_count: int,
+    max_arrows: int,
 	health: f32,
 	max_health: f32,
 	aabb: Vector4,
@@ -1367,31 +1378,32 @@ entity_create :: proc() -> ^Entity {
 }
 
 entity_destroy :: proc(entity: ^Entity) {
+    if entity.kind == .arrow {
+        for &en in gs.entities {
+            if en.kind == .player {
+                en.arrow_count -= 1
+                break
+            }
+        }
+    }
+
     if entity.kind == .dummy {
         gs.skills_system.dummies_killed += 1
         check_skills_unlock(&gs.skills_system)
 
         if gs.skills_system.is_unlocked {
-            add_xp_to_active_skill(&gs.skills_system, 50)
-        }
-    }
-
-    if gs.skills_system.is_unlocked {
             base_xp := 50
             xp_multiplier := calculate_xp_boost(gs.skills_system.active_skill)
             total_xp := int(f32(base_xp) * xp_multiplier)
 
-            pos := entity.pos + v2{0, 50}
-            draw_text(
-                pos,
-                fmt.tprintf("+%d XP", total_xp),
-                scale = 1.5,
-                col = v4{0, 1, 0, 1},
-                z_layer = .ui
-            )
-        }
+            add_xp_to_active_skill(&gs.skills_system, base_xp)
 
-	mem.set(entity, 0, size_of(Entity))
+            pos := entity.pos + v2{0, 50}
+            add_floating_text(pos, fmt.tprintf("+%d XP", total_xp))
+        }
+    }
+
+    mem.set(entity, 0, size_of(Entity))
 }
 
 
@@ -1401,13 +1413,15 @@ entity_destroy :: proc(entity: ^Entity) {
 setup_player :: proc(e: ^Entity) {
 	e.kind = .player
     e.flags |= { .allocated }
+    e.max_arrows = 1
+    e.arrow_count = 0
 
     animations := create_animation_collection()
 
     shoot_frames: []Image_Id = {
         .player_attack1, .player_attack2, .player_attack3, .player_attack4,
         .player_attack5, .player_attack6, .player_attack7, .player_attack8,
-        .player_attack9,
+        .player_attack9, .player_attack1,
     }
     shoot_anim := create_animation(
         shoot_frames,
@@ -1421,6 +1435,7 @@ setup_player :: proc(e: ^Entity) {
 }
 
 setup_dummy :: proc(e: ^Entity){
+    debug := true
     e.kind = .dummy
     e.flags |= { .allocated }
     e.health = DUMMY_MAX_HEALTH
@@ -1437,7 +1452,7 @@ setup_dummy :: proc(e: ^Entity){
 
     e.animations = animations
 
-    dummy_size := v2{32, 32}
+    dummy_size := v2{64, 64}
     e.aabb = aabb_make(e.pos, dummy_size, Pivot.bottom_center)
 }
 
@@ -1860,8 +1875,8 @@ update_current_animation :: proc(collection: ^Animation_Collection, delta_t: f32
     if collection.current_animation != "" {
         if anim, ok := &collection.animations[collection.current_animation]; ok {
             animation_finished := update_animation(anim, delta_t)
-            if animation_finished && collection.current_animation == "attack"{
-                play_animation_by_name(collection, "idle")
+            if animation_finished {
+                collection.current_animation = ""
             }
         }
     }
@@ -3174,4 +3189,64 @@ check_and_reload :: proc(hr: ^UI_Hot_Reload) {
            log_error("Reloaded UI configuration")
        }
    }
+}
+
+//
+// :floating text
+
+Floating_Text :: struct {
+    pos: Vector2,
+    text: string,
+    lifetime: f32,
+    alpha: f32,
+    scale: f32,
+    color: Vector4,
+    velocity: Vector2,
+}
+
+MAX_FLOATING_TEXTS :: 32
+floating_texts: [MAX_FLOATING_TEXTS]Floating_Text
+
+add_floating_text :: proc(pos: Vector2, text: string, color := v4{0,1,0,1}) {
+    for &ft in floating_texts {
+        if ft.lifetime <= 0 {
+            ft = Floating_Text{
+                pos = pos,
+                text = text,
+                lifetime = 1.5,
+                alpha = 1.0,
+                scale = 1.5,
+                color = color,
+                velocity = v2{0, 50},
+            }
+
+            return
+        }
+    }
+}
+
+update_floating_texts :: proc(dt: f32) {
+    for &ft in floating_texts {
+        if ft.lifetime > 0 {
+            ft.lifetime -= dt
+            ft.pos += ft.velocity * dt
+            if ft.lifetime < 0.5 {
+                ft.alpha = ft.lifetime / 0.5
+            }
+        }
+    }
+}
+
+render_floating_texts :: proc() {
+    for ft in floating_texts {
+        if ft.lifetime > 0 {
+            draw_text(
+                ft.pos,
+                ft.text,
+                col = ft.color * v4{1,1,1,ft.alpha},
+                scale = auto_cast ft.scale,
+                z_layer = .ui,
+            )
+        }
+    }
 }
