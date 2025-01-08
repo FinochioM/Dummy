@@ -2260,8 +2260,13 @@ render_quest_entry_configured :: proc(quest: ^Quest, pos: Vector2) {
     if quest.level < 5 {
         next_level_pos := pos + v2{cfg.next_level_offset_x, cfg.next_level_offset_y}
         req_skill_level := quest.required_skill_levels[quest.level]
-        draw_text(next_level_pos, fmt.tprintf("Next level at %s level %d",
-            gs.skills_system.skills[quest.required_skill].name, req_skill_level), z_layer = .ui)
+
+        draw_text(next_level_pos, "Next level at", z_layer = .ui)
+        draw_text(
+            next_level_pos + v2{0, -20},
+            fmt.tprintf("%s level %d", gs.skills_system.skills[quest.required_skill].name, req_skill_level),
+            z_layer = .ui
+        )
     }
 }
 
