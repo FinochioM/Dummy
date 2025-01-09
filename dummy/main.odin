@@ -1201,8 +1201,8 @@ Arrow_Data :: struct {
     lifetime: f32,
 }
 
-SHOOT_COOLDOWN :: 1.5
-ARROW_SPEED :: 1200.0
+SHOOT_COOLDOWN :: 1.2
+ARROW_SPEED :: 1700.0
 ARROW_LIFETIME :: 2.0
 ACCURACY_VARIANCE :: 20.0
 GRAVITY_EFFECT :: 2000.0
@@ -1219,18 +1219,23 @@ update_arrow :: proc(e: ^Entity, dt: f32) {
         return
     }
 
-    arrow_size := v2{10, 1}
+    arrow_size := v2{20, 2}
     arrow_aabb := aabb_make(e.pos, arrow_size, Pivot.center_center)
+
+    arrow_path := aabb_make(old_pos, arrow_size, Pivot.center_center)
+    arrow_path.x = min(old_pos.x, e.pos.x) - arrow_size.x * 0.5
+    arrow_path.z = max(old_pos.x, e.pos.x) + arrow_size.x * 0.5
+    arrow_path.y = min(old_pos.y, e.pos.y) - arrow_size.y * 0.5
+    arrow_path.w = max(old_pos.y, e.pos.y) + arrow_size.y * 0.5
 
     for &target in gs.entities {
         if .allocated not_in target.flags || target.kind != .dummy {
             continue
         }
 
-        dummy_size := v2{32, 32}
-        target.aabb = aabb_make(target.pos, dummy_size, Pivot.bottom_center)
+        target.aabb = aabb_make(target.pos, v2{64, 64}, Pivot.bottom_center)
 
-        if aabb_collide(arrow_aabb, target.aabb){
+        if aabb_collide(arrow_path, target.aabb) || aabb_collide(arrow_aabb, target.aabb) {
             damage_entity(&target, ARROW_DAMAGE)
             entity_destroy(e)
             return
