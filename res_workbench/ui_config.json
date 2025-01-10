@@ -54,7 +54,21 @@
         "offset_x": 370,
         "offset_y": 0,
         "scale": 1.4
-      }
+      },
+      "xp_bar":{
+        "bar_width": 220.0,
+        "bar_height": 5.0,
+        "bar_pos_x": 210,
+        "bar_pos_y": -25.0,
+        "bar_sprite": "skill_xp_bar"
+        "zlayer_xp": "xp_bars",
+        "zlayer_xp_2": "ui",
+        "fill_speed": 0.6,
+        "rect_width": 440,
+        "rect_height": 8,
+        "rect_pos_x": -6.5,
+        "rect_pos_y": -25.0,
+      },
     },
     "tooltip": {
       "offset_x": 585,

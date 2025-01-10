@@ -431,6 +431,7 @@ ZLayer :: enum u8{
     player,
     foreground,
     ui,
+    xp_bars,
 }
 
 Coord_Space :: struct {
@@ -584,6 +585,7 @@ Image_Id :: enum {
     radio_unselected,
     quests_button,
     coin,
+    skill_xp_bar,
 }
 
 Image :: struct {
@@ -1131,7 +1133,7 @@ mouse_pos_in_world_space :: proc() -> Vector2 {
 //
 // :dummies
 DUMMY_MAX_HEALTH :: 100.0
-ARROW_DAMAGE :: 200.0 // 20
+ARROW_DAMAGE :: 50.0 // 20
 
 spawn_dummy :: proc(position: Vector2) -> ^Entity {
     dummy := entity_create()
@@ -2258,6 +2260,8 @@ Quest :: struct {
     required_skill: Skill_Type,
     required_skill_levels: [5]int,
     gold_per_tick: [5]int,
+    progress: f32,
+    display_progress: f32,
 }
 
 Quests_System :: struct {
@@ -2328,14 +2332,23 @@ init_quests_system :: proc() -> Quests_System {
 }
 
 update_quests_system :: proc(system: ^Quests_System, dt: f32) {
-    if system.active_quest == nil {
-        return
-    }
+    if system.active_quest == nil do return
 
     system.timer -= dt
     if system.timer <= 0 {
         system.timer = QUEST_TICK_TIME
         give_quest_rewards(system.active_quest)
+        system.active_quest.progress = 0
+    } else {
+        system.active_quest.progress = 1 - (system.timer / QUEST_TICK_TIME)
+    }
+
+    if system.active_quest != nil {
+        animate_to_target_f32(
+            &system.active_quest.display_progress,
+            system.active_quest.progress,
+            dt * 5
+        )
     }
 }
 
@@ -2448,15 +2461,36 @@ render_quest_entry_configured :: proc(quest: ^Quest, pos: Vector2) {
 }
 
 render_active_quest_ui :: proc(quest: ^Quest) {
-    if quest == nil {
-        return
-    }
+    if quest == nil do return
 
     text_pos := v2{-620, 240}
-    draw_text(text_pos, fmt.tprintf("%s (Level %d)", quest.name, quest.level), scale = 1.2, z_layer = .ui)
+    draw_text(text_pos, fmt.tprintf("%s (Level %d)", quest.name, quest.level),
+              scale = 1.2, z_layer = .ui)
 
-    reward_pos := text_pos + v2{0, -25}
-    draw_text(reward_pos, fmt.tprintf("Gold per tick: %d", quest.gold_per_tick[quest.level - 1]), z_layer = .ui)
+    bar_width := 180.0
+    bar_height := 8.0
+    bar_pos := text_pos + v2{0, -25}
+
+    draw_rect_aabb(
+        bar_pos,
+        v2{f32(bar_width), f32(bar_height)},
+        col = Colors.xp_bar_bg,
+        z_layer = .xp_bars
+    )
+
+    draw_rect_aabb(
+        bar_pos,
+        v2{f32(bar_width) * quest.display_progress, f32(bar_height)},
+        col = Colors.xp_bar_fill,
+        z_layer = .xp_bars
+    )
+
+    reward_pos := bar_pos + v2{0, -20}
+    draw_text(
+        reward_pos,
+        fmt.tprintf("Gold per tick: %d", quest.gold_per_tick[quest.level - 1]),
+        z_layer = .xp_bars
+    )
 }
 
 render_quest_menu_button :: proc() {
@@ -2568,6 +2602,20 @@ Skills_UI_Config :: struct {
             offset_y: f32,
             scale: f32,
         },
+        xp_bar: struct {
+            bar_width: f32,
+            bar_height: f32,
+            bar_pos_x: f32,
+            bar_pos_y: f32,
+            bar_sprite: Image_Id,
+            zlayer_xp: ZLayer,
+            zlayer_xp_2: ZLayer,
+            fill_speed: f32,
+            rect_width: f32,
+            rect_height: f32,
+            rect_pos_x: f32,
+            rect_pos_y: f32,
+        }
     },
     tooltip: struct {
         offset_x: f32,
@@ -2778,13 +2826,44 @@ draw_unlocked_skills :: proc(start_pos: Vector2, alpha: f32) {
 
     mouse_pos := mouse_pos_in_world_space()
 
-    if key_just_pressed(.LEFT_MOUSE) {
-        loggie("Mouse pos:", mouse_pos)
-    }
-
-    for skill, i in gs.skills_system.skills {
+    for &skill, i in gs.skills_system.skills {
         if !skill.is_unlocked do continue
         if pos.y + spacing < content_bottom || pos.y > content_top do continue
+
+        bar_width := cfg.xp_bar.bar_width
+        bar_height := cfg.xp_bar.bar_height
+        rect_width := cfg.xp_bar.rect_width
+        rect_height := cfg.xp_bar.rect_height
+        bar_pos := pos + v2{cfg.xp_bar.bar_pos_x, cfg.xp_bar.bar_pos_y}
+        rect_pos := pos + v2{cfg.xp_bar.rect_pos_x, cfg.xp_bar.rect_pos_y}
+
+        draw_sprite_with_size(
+            bar_pos,
+            v2{bar_width, bar_height},
+            cfg.xp_bar.bar_sprite,
+            pivot = .bottom_center,
+            z_layer = cfg.xp_bar.zlayer_xp
+        )
+
+        target_xp_ratio := f32(skill.current_xp) / f32(skill.xp_to_next_level)
+        animate_to_target_f32(&skill.display_xp, target_xp_ratio, f32(sapp.frame_duration()) * cfg.xp_bar.fill_speed)
+
+        draw_rect_aabb(
+            rect_pos,
+            v2{rect_width * skill.display_xp, rect_height},
+            col = Colors.xp_bar_fill,
+            z_layer = cfg.xp_bar.zlayer_xp_2
+        )
+
+        xp_text_pos := bar_pos + v2{bar_width + 10, 0}
+        draw_text(
+            xp_text_pos,
+            fmt.tprintf("%d/%d", skill.current_xp, skill.xp_to_next_level),
+            col = Colors.text * v4{1,1,1,1},
+            scale = 0.8,
+            pivot = .center_left,
+            z_layer = cfg.xp_bar.zlayer_xp
+        )
 
         is_active := gs.skills_system.active_skill == &gs.skills_system.skills[i]
 
@@ -2842,13 +2921,8 @@ draw_unlocked_skills :: proc(start_pos: Vector2, alpha: f32) {
                 draw_skill_tooltip(&gs.skills_system.skills[i], tooltip_pos)
 
                 if key_just_pressed(.LEFT_MOUSE) {
-                    loggie("Clicking skill:", skill.name)
                     old_active := gs.skills_system.active_skill
-                    if old_active != nil {
-                        loggie("Old active skill:", old_active.name)
-                    }
                     gs.skills_system.active_skill = &gs.skills_system.skills[i]
-                    loggie("New active skill:", gs.skills_system.active_skill.name)
                 }
             }
         }
@@ -2884,6 +2958,7 @@ draw_unlocked_skills :: proc(start_pos: Vector2, alpha: f32) {
             z_layer = .ui,
         )
     }
+
 }
 
 unlock_skill :: proc(system: ^Skills_System, skill: ^Skill) {
