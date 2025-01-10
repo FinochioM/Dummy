@@ -2213,8 +2213,28 @@ check_spawn_button :: proc() {
 
 
 //
+// :systems
+XP_CONSTANTS :: struct {
+    BASE_XP_FROM_DUMMY: int,
+    BASE_XP_BOOST: f32,
+    XP_BOOST_PER_LEVEL: f32,
+    MAX_LEVEL: int,
+    LEVEL_XP_MULTIPLIER: f32,
+}
+
+XP :: XP_CONSTANTS{
+    BASE_XP_FROM_DUMMY = 500,
+    BASE_XP_BOOST = 0.10,
+    XP_BOOST_PER_LEVEL = 0.10,
+    MAX_LEVEL = 25,
+    LEVEL_XP_MULTIPLIER = 2.5,
+}
+
+//
 // :quests
 QUEST_TICK_TIME :: 1.5
+QUEST_GOLD_REWARDS :: [5]int{25, 75, 225, 675, 2025}
+QUEST_LEVEL_REQUIREMENTS :: [5]int{3, 6, 9, 12, 15}
 
 Quest_Type :: enum {
     nil,
@@ -2284,20 +2304,19 @@ init_quests_system :: proc() -> Quests_System {
         menu_open = false,
     }
 
-    gold_quest := Quest{
+    apprentice_quest := Quest{
         type = .gold_generation,
-        name = "Gold Generation",
-        description ="Generates gold over time",
+        name = "Apprentice's Dedication",
+        description = "Study ancient scrolls and practice basic archery techniques",
         level = 1,
         is_unlocked = false,
         cooldown = QUEST_TICK_TIME,
         required_skill = .xp_boost,
-        required_skill_levels = {5, 8, 12, 15, 20},
-        gold_per_tick = {1, 2, 3, 4, 5},
+        required_skill_levels = QUEST_LEVEL_REQUIREMENTS,
+        gold_per_tick = QUEST_GOLD_REWARDS,
     }
 
-    append(&system.quests, gold_quest)
-
+    append(&system.quests, apprentice_quest)
     return system
 }
 
@@ -2548,7 +2567,7 @@ init_skills_system :: proc() -> Skills_System {
         active_skill = nil,
         dummies_killed = 0,
         is_unlocked = false,
-        gold = 10000,
+        gold = 0,
         menu_open = false,
     }
 
@@ -2581,9 +2600,9 @@ calculate_xp_boost :: proc(skill: ^Skill) -> f32{
         return 1.0
     }
 
-    base_boost := 0.05
-    level_boost := 0.05 * f32(skill.level - 1)
-    return 1.0 + f32(base_boost) + f32(level_boost)
+    base_boost := XP.BASE_XP_BOOST
+    level_boost := XP.XP_BOOST_PER_LEVEL * f32(skill.level - 1)
+    return 1.0 + base_boost + level_boost
 }
 
 calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
@@ -2608,16 +2627,27 @@ add_xp_to_active_skill :: proc(system: ^Skills_System, base_xp: int) {
         return
     }
 
+    if system.active_skill.level >= XP.MAX_LEVEL {
+        return
+    }
+
     xp_multiplier := calculate_xp_boost(system.active_skill)
     total_xp := int(f32(base_xp) * xp_multiplier)
-
     prev_level := system.active_skill.level
+
     system.active_skill.current_xp += total_xp
 
     for system.active_skill.current_xp >= system.active_skill.xp_to_next_level {
         system.active_skill.current_xp -= system.active_skill.xp_to_next_level
         system.active_skill.level += 1
-        system.active_skill.xp_to_next_level = int(f32(system.active_skill.xp_to_next_level) * 1.5)
+
+        if system.active_skill.level >= XP.MAX_LEVEL {
+            system.active_skill.level = XP.MAX_LEVEL
+            system.active_skill.current_xp = 0
+            break
+        }
+
+        system.active_skill.xp_to_next_level = int(f32(system.active_skill.xp_to_next_level) * XP.LEVEL_XP_MULTIPLIER)
     }
 
     if system.active_skill.level > prev_level {

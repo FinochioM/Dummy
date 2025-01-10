@@ -45,3 +45,72 @@ Quests
  draw_sprite_with_size ->
     - 256 == 512
     - 1024 == 128
+
+
+LATER:
+ - Screens instead of menus with buttons. Maybe swap to the right, skills screen, swap to the left, quests menu.
+ - Upgrades system where upgrades make the game progression better. The goal is to have a good progressive game.
+
+
+NORMALS SKILLS AND QUESTS:
+
+Experience Mastery -> "Apprentice's Dedication"
+Skill: Increases XP gained
+Quest: Study ancient scrolls and practice basic archery techniques - Gives gold per QUEST_TICK_TIME
+
+
+Strength Mastery -> "Warrior's Resolve"
+Skill: Increases arrow damage
+Quest: Train with weighted bows and reinforced targets - Gives gold per QUEST_TICK_TIME
+
+
+Speed Mastery -> "Wind Walker's Grace"
+Skill: Increases attack speed
+Quest: Practice quick-draw techniques with master archers - Gives gold per QUEST_TICK_TIME and a fixed amount of XP to "Experience Mastery"
+
+
+Critical Mastery -> "Hunter's Precision"
+Skill: Increases critical hit chance
+Quest: Perfect vital point targeting on moving targets - Gives gold per QUEST_TICK_TIME and a fixed amount of XP to "Strength Mastery"
+
+
+Multi-Shot -> "Storm of Arrows"
+Skill: Chance to fire additional arrows
+Quest: Master the art of rapid arrow nocking - Gives gold per QUEST_TICK_TIME and a fixed amount of XP to "Speed Mastery"
+
+
+Elemental Archery -> "Mystic Fletcher"
+Skill: Chance to imbue arrows with magical effects
+Quest: Study with the realm's enchanted bowyers - Gives gold per QUEST_TICK_TIME and a fixed amount of XP to "Multi-Shot"
+
+
+Battle Recovery -> "Warrior's Stamina"
+Skill: Reduces cooldown after critical hits
+Quest: Endurance training with veteran rangers - Gives gold per QUEST_TICK_TIME and a fixed amount of XP to "Elemental Mastery"
+
+
+ADVANCED SKILLS AND QUESTS:
+
+Formation Mastery -> "Strategic Positioning"
+Skill: Multiple dummies grant bonus XP
+Quest: Train squad formations - Gives gold and small chance to instantly level up a random unlocked skill
+
+
+Battle Meditation -> "Inner Focus"
+Skill: Enables 'Focus Mode' for increased rewards
+Quest: Deep meditation rituals - Gives gold and temporary boost to all XP gains
+
+
+War Preparation -> "Resource Mastery"
+Skill: Increases gold gained from all sources by a percentage
+Quest: Optimize training resources - Gives gold and has a chance to trigger bonus gold drops from dummies
+
+
+Combat Analysis -> "Tactical Insight"
+Skill: Increases chance for dummies to spawn with weak points
+Quest: Study battle reports - Gives gold and has a small change to double the XP amount given when killing the enemy right after hitting a weakpoint.
+
+
+Leadership -> "Commander's Authority"
+Skill: All other skills gain small passive XP
+Quest: Lead training exercises - Gives gold and randomly triggers other quests' rewards
