@@ -1131,7 +1131,7 @@ mouse_pos_in_world_space :: proc() -> Vector2 {
 //
 // :dummies
 DUMMY_MAX_HEALTH :: 100.0
-ARROW_DAMAGE :: 20.0 // 20
+ARROW_DAMAGE :: 200.0 // 20
 
 spawn_dummy :: proc(position: Vector2) -> ^Entity {
     dummy := entity_create()
@@ -1404,7 +1404,14 @@ entity_destroy :: proc(entity: ^Entity) {
             add_xp_to_active_skill(&gs.skills_system, base_xp)
 
             pos := entity.pos + v2{0, 50}
-            add_floating_text(pos, fmt.tprintf("+%d XP", total_xp))
+            add_floating_text_params(
+                pos,
+                fmt.tprintf("+%d XP", total_xp),
+                scale = 0.8,
+                target_scale = 1.0,
+                lifetime = 1.0,
+                velocity = v2{0, 75},
+            )
         }
     }
 
@@ -2234,7 +2241,7 @@ XP :: XP_CONSTANTS{
 // :quests
 QUEST_TICK_TIME :: 1.5
 QUEST_GOLD_REWARDS :: [5]int{25, 75, 225, 675, 2025}
-QUEST_LEVEL_REQUIREMENTS :: [5]int{3, 6, 9, 12, 15}
+QUEST_LEVEL_REQUIREMENTS :: [5]int{1, 6, 9, 12, 15}
 
 Quest_Type :: enum {
     nil,
@@ -2333,13 +2340,24 @@ update_quests_system :: proc(system: ^Quests_System, dt: f32) {
 }
 
 give_quest_rewards :: proc(quest: ^Quest) {
-    if quest == nil {
-        return
-    }
+    if quest == nil do return
 
     #partial switch quest.type {
         case .gold_generation:
-            gs.skills_system.gold += quest.gold_per_tick[quest.level - 1]
+            gold_amount := quest.gold_per_tick[quest.level - 1]
+            gs.skills_system.gold += gold_amount
+
+            cfg := gs.ui_config.gold_display
+            gold_pos := v2{cfg.pos_x + cfg.text_offset_x + 100, cfg.pos_y + cfg.text_offset_y}
+            add_floating_text_params(
+                gold_pos,
+                fmt.tprintf("+%d Gold", gold_amount),
+                v4{1,0.8,0,1},
+                scale = 0.7,
+                target_scale = 0.8,
+                lifetime = 1.0,
+                velocity = v2{0, 50},
+            )
     }
 }
 
@@ -2474,6 +2492,7 @@ Skill :: struct {
     xp_to_next_level: int,
     description: string,
     is_unlocked: bool,
+    display_xp: f32,
 }
 
 Skills_System :: struct {
@@ -3237,6 +3256,8 @@ Floating_Text :: struct {
     scale: f32,
     color: Vector4,
     velocity: Vector2,
+    target_scale: f32,
+    current_scale: f32,
 }
 
 MAX_FLOATING_TEXTS :: 32
@@ -3245,16 +3266,50 @@ floating_texts: [MAX_FLOATING_TEXTS]Floating_Text
 add_floating_text :: proc(pos: Vector2, text: string, color := v4{0,1,0,1}) {
     for &ft in floating_texts {
         if ft.lifetime <= 0 {
+            text_copy := strings.clone(text)
+
             ft = Floating_Text{
                 pos = pos,
-                text = text,
-                lifetime = 1.5,
+                text = text_copy,
+                lifetime = 1.2,
                 alpha = 1.0,
-                scale = 1.5,
+                scale = 1.0,
+                target_scale = 1.5,
+                current_scale = 1.0,
                 color = color,
-                velocity = v2{0, 50},
+                velocity = v2{0, 25},
             }
+            return
+        }
+    }
+}
 
+add_floating_text_params :: proc(
+    pos: Vector2,
+    text: string,
+    color := v4{0,1,0,1},
+    scale:f32 = 1.0,
+    target_scale:f32 = 1.0,
+    lifetime:f32 = 1.0,
+    alpha:f32 = 1.0,
+    velocity:Vector2 = v2{0, 25},
+)
+    {
+    for &ft in floating_texts {
+        if ft.lifetime <= 0 {
+            text_copy := strings.clone(text)
+
+            ft = Floating_Text{
+                pos = pos,
+                text = text_copy,
+                lifetime = lifetime,
+                alpha = alpha,
+                scale = scale,
+                target_scale = target_scale,
+                current_scale = scale,
+                color = color,
+                velocity = velocity,
+            }
             return
         }
     }
@@ -3265,13 +3320,21 @@ update_floating_texts :: proc(dt: f32) {
         if ft.lifetime > 0 {
             ft.lifetime -= dt
             ft.pos += ft.velocity * dt
+
+            animate_to_target_f32(&ft.current_scale, ft.target_scale, dt * 8)
+            ft.scale = ft.current_scale
+
             if ft.lifetime < 0.5 {
-                ft.alpha = ft.lifetime / 0.5
+                ft.alpha = ease.cubic_in(ft.lifetime / 0.5)
+            }
+
+            if ft.lifetime <= 0 {
+                delete(ft.text)
+                ft = Floating_Text{}
             }
         }
     }
 }
-
 render_floating_texts :: proc() {
     for ft in floating_texts {
         if ft.lifetime > 0 {
