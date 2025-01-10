@@ -115,6 +115,23 @@
         "offset_y": -40,
         "size_x": 70,
         "size_y": 25
+      },
+      "xp_bar":{
+        "text_pos_x": 0.0,
+        "text_pos_y": 0.0,
+        "text_scale": 1.0,
+        "text_layer": "xp_bars",
+        "sprite": "skill_xp_bar",
+        "sprite_layer": "xp_bars",
+        "sprite_width": 220.0,
+        "sprite_height": 5.0,
+        "sprite_pos_x": -120.0,
+        "sprite_pos_y": -20.0,
+        "bar_layer": "ui",
+        "bar_width": 440.0,
+        "bar_height": 6.0,
+        "bar_pos_x": -120.0,
+        "bar_pos_y": -18.,
       }
     }
   },

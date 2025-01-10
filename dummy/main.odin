@@ -2304,6 +2304,23 @@ Quest_UI_Config :: struct {
             size_x: f32,
             size_y: f32,
         },
+        xp_bar: struct {
+            text_pos_x: f32,
+            text_pos_y: f32,
+            text_scale: f32,
+            text_layer: ZLayer,
+            sprite: Image_Id,
+            sprite_layer: ZLayer,
+            sprite_width: f32,
+            sprite_height: f32,
+            sprite_pos_x: f32,
+            sprite_pos_y: f32,
+            bar_layer: ZLayer,
+            bar_width: f32,
+            bar_height: f32,
+            bar_pos_x: f32,
+            bar_pos_y: f32,
+        },
     },
 }
 
@@ -2430,7 +2447,36 @@ render_quest_entry_configured :: proc(quest: ^Quest, pos: Vector2) {
     reward_pos := pos + v2{cfg.reward_offset_x, cfg.reward_offset_y}
     draw_text(reward_pos, fmt.tprintf("Gold per tick: %d", quest.gold_per_tick[quest.level - 1]), z_layer = .ui)
 
-    if !is_active {
+    if is_active {
+        sprite_width := cfg.xp_bar.sprite_width
+        sprite_height := cfg.xp_bar.sprite_height
+        sprite_pos := pos + v2{cfg.xp_bar.sprite_pos_x, cfg.xp_bar.sprite_pos_y}
+        bar_width := cfg.xp_bar.bar_width
+        bar_height := cfg.xp_bar.bar_height
+        bar_pos := pos + v2{cfg.xp_bar.bar_pos_x, cfg.xp_bar.bar_pos_y}
+
+        draw_sprite_with_size(
+            sprite_pos,
+            v2{sprite_width, sprite_height},
+            cfg.xp_bar.sprite,
+            z_layer = cfg.xp_bar.sprite_layer,
+        )
+
+        progress_ratio := quest.display_progress
+        draw_rect_aabb(
+            bar_pos,
+            v2{bar_width, bar_height},
+            col = Colors.xp_bar_bg,
+            z_layer = cfg.xp_bar.bar_layer
+        )
+
+        draw_rect_aabb(
+            bar_pos,
+            v2{bar_width * progress_ratio, bar_height},
+            col = Colors.xp_bar_fill,
+            z_layer = cfg.xp_bar.bar_layer
+        )
+    } else {
         button_pos := pos + v2{cfg.select_button.offset_x, cfg.select_button.offset_y}
         button_size := v2{cfg.select_button.size_x, cfg.select_button.size_y}
 
@@ -2444,6 +2490,8 @@ render_quest_entry_configured :: proc(quest: ^Quest, pos: Vector2) {
         if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
             gs.quests_system.active_quest = quest
             gs.quests_system.timer = QUEST_TICK_TIME
+            quest.progress = 0
+            quest.display_progress = 0
         }
     }
 
@@ -2463,26 +2511,38 @@ render_quest_entry_configured :: proc(quest: ^Quest, pos: Vector2) {
 render_active_quest_ui :: proc(quest: ^Quest) {
     if quest == nil do return
 
-    text_pos := v2{-620, 240}
-    draw_text(text_pos, fmt.tprintf("%s (Level %d)", quest.name, quest.level),
-              scale = 1.2, z_layer = .ui)
+    cfg := gs.ui_config.quests.quest_entry
 
-    bar_width := 180.0
-    bar_height := 8.0
-    bar_pos := text_pos + v2{0, -25}
+    text_pos := v2{cfg.xp_bar.text_pos_x, cfg.xp_bar.text_pos_y}
+    draw_text(
+        text_pos,
+        fmt.tprintf("%s (Level %d)", quest.name, quest.level),
+        scale = f64(cfg.xp_bar.text_scale),
+        z_layer = cfg.xp_bar.text_layer
+    )
 
-    draw_rect_aabb(
-        bar_pos,
-        v2{f32(bar_width), f32(bar_height)},
-        col = Colors.xp_bar_bg,
-        z_layer = .xp_bars
+    sprite_width := cfg.xp_bar.sprite_width
+    sprite_height := cfg.xp_bar.sprite_height
+    sprite_size := v2{sprite_width, sprite_height}
+    sprite_pos := text_pos + v2{cfg.xp_bar.sprite_pos_x, cfg.xp_bar.sprite_pos_y}
+
+    bar_width := cfg.xp_bar.bar_width
+    bar_height := cfg.xp_bar.bar_height
+    bar_size := v2{bar_width, bar_height}
+    bar_pos := text_pos + v2{cfg.xp_bar.bar_pos_x, cfg.xp_bar.bar_pos_y}
+
+    draw_sprite_with_size(
+        sprite_pos,
+        sprite_size,
+        cfg.xp_bar.sprite,
+        z_layer = cfg.xp_bar.sprite_layer,
     )
 
     draw_rect_aabb(
         bar_pos,
-        v2{f32(bar_width) * quest.display_progress, f32(bar_height)},
+        bar_size,
         col = Colors.xp_bar_fill,
-        z_layer = .xp_bars
+        z_layer = cfg.xp_bar.bar_layer,
     )
 
     reward_pos := bar_pos + v2{0, -20}
