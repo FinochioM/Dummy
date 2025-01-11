@@ -1133,7 +1133,6 @@ mouse_pos_in_world_space :: proc() -> Vector2 {
 //
 // :dummies
 DUMMY_MAX_HEALTH :: 100.0
-ARROW_DAMAGE :: 50.0 // 20
 
 spawn_dummy :: proc(position: Vector2) -> ^Entity {
     dummy := entity_create()
@@ -1203,6 +1202,8 @@ Arrow_Data :: struct {
     lifetime: f32,
 }
 
+ARROW_BASE_DAMAGE :: 20.0
+ARROW_DAMAGE :: 20.0 // 20
 SHOOT_COOLDOWN :: 1.2
 ARROW_SPEED :: 1700.0
 ARROW_LIFETIME :: 2.0
@@ -1261,6 +1262,19 @@ shoot_arrow :: proc(player: ^Entity, target: ^Entity){
     player.arrow_count += 1
 }
 
+calculate_arrow_damage :: proc(system: ^Skills_System) -> f32 {
+    base_damage := ARROW_BASE_DAMAGE
+
+    for &skill in system.skills {
+        if skill.is_unlocked && skill.type == .strength_boost {
+            strength_bonus := 0.10 + 0.10 * f32(skill.level - 1)
+            return f32(base_damage) * f32((1.0 + strength_bonus))
+        }
+    }
+
+    return f32(base_damage)
+}
+
 //
 // :entity
 //
@@ -1313,8 +1327,7 @@ damage_entity :: proc(e: ^Entity, base_damage: f32) {
             if skill.is_unlocked {
                 #partial switch skill.type {
                     case .strength_boost:
-                        strength_bonus := calculate_skill_bonus(&skill)
-                        damage *= (1.0 + strength_bonus)
+                        damage = calculate_arrow_damage(system)
                     case .critical_boost:
                         crit_chance := calculate_skill_bonus(&skill)
                         if rand.float32() < crit_chance {
@@ -1400,10 +1413,8 @@ entity_destroy :: proc(entity: ^Entity) {
 
         if gs.skills_system.is_unlocked {
             base_xp := 50
-            xp_multiplier := calculate_xp_boost(gs.skills_system.active_skill)
-            total_xp := int(f32(base_xp) * xp_multiplier)
 
-            add_xp_to_active_skill(&gs.skills_system, base_xp)
+            total_xp := add_xp_to_active_skill(&gs.skills_system, base_xp)
 
             pos := entity.pos + v2{0, 50}
             add_floating_text_params(
@@ -2236,13 +2247,13 @@ XP :: XP_CONSTANTS{
     BASE_XP_BOOST = 0.10,
     XP_BOOST_PER_LEVEL = 0.10,
     MAX_LEVEL = 25,
-    LEVEL_XP_MULTIPLIER = 2.5,
+    LEVEL_XP_MULTIPLIER = 1.2,
 }
 
 //
 // :quests
 QUEST_TICK_TIME :: 1.5
-QUEST_GOLD_REWARDS :: [5]int{25, 75, 225, 675, 2025}
+QUEST_GOLD_REWARDS :: [5]int{10, 25, 50, 100, 200}
 QUEST_LEVEL_REQUIREMENTS :: [5]int{1, 6, 9, 12, 15}
 
 Quest_Type :: enum {
@@ -2285,6 +2296,20 @@ Quest_UI_Config :: struct {
         size_x: f32,
         size_y: f32,
         sprite: Image_Id,
+    },
+    next_quest: struct {
+        offset_x: f32,
+        offset_y: f32,
+        panel_size_x: f32,
+        panel_size_y: f32,
+        title_offset_x: f32,
+        title_offset_y: f32,
+        name_offset_x: f32,
+        name_offset_y: f32,
+        desc_offset_x: f32,
+        desc_offset_y: f32,
+        level_req_offset_x: f32,
+        level_req_offset_y: f32,
     },
     quest_entry: struct {
         start_offset_x: f32,
@@ -2344,7 +2369,20 @@ init_quests_system :: proc() -> Quests_System {
         gold_per_tick = QUEST_GOLD_REWARDS,
     }
 
+    warrior_quest := Quest{
+        type = .gold_generation,
+        name = "Warrior's Resolve",
+        description = "Train with weighted bows and reinforced targets",
+        level = 1,
+        is_unlocked = false,
+        cooldown = QUEST_TICK_TIME,
+        required_skill = .strength_boost,
+        required_skill_levels = QUEST_LEVEL_REQUIREMENTS,
+        gold_per_tick = QUEST_GOLD_REWARDS,
+    }
+
     append(&system.quests, apprentice_quest)
+    append(&system.quests, warrior_quest)
     return system
 }
 
@@ -2422,6 +2460,19 @@ render_quests_ui :: proc() {
         z_layer = .ui,
     )
 
+    next_quest: ^Quest
+    for &quest in gs.quests_system.quests {
+        if !quest.is_unlocked {
+            next_quest = &quest
+            break
+        }
+    }
+
+    if next_quest != nil {
+        next_quest_pos := menu_pos + v2{cfg.next_quest.offset_x, cfg.next_quest.offset_y}
+        draw_next_quest_panel(next_quest, next_quest_pos)
+    }
+
     entry_cfg := cfg.quest_entry
     quest_y := menu_pos.y + entry_cfg.start_offset_y
 
@@ -2494,18 +2545,6 @@ render_quest_entry_configured :: proc(quest: ^Quest, pos: Vector2) {
             quest.display_progress = 0
         }
     }
-
-    if quest.level < 5 {
-        next_level_pos := pos + v2{cfg.next_level_offset_x, cfg.next_level_offset_y}
-        req_skill_level := quest.required_skill_levels[quest.level]
-
-        draw_text(next_level_pos, "Next level at", z_layer = .ui)
-        draw_text(
-            next_level_pos + v2{0, -20},
-            fmt.tprintf("%s level %d", gs.skills_system.skills[quest.required_skill].name, req_skill_level),
-            z_layer = .ui
-        )
-    }
 }
 
 render_active_quest_ui :: proc(quest: ^Quest) {
@@ -2565,6 +2604,77 @@ render_quest_menu_button :: proc() {
         pivot = .center_center,
         xform = xform_scale(v2{gs.ui.quest_button_scale, gs.ui.quest_button_scale}),
         z_layer = .ui,
+    )
+}
+
+draw_next_quest_panel :: proc(quest: ^Quest, pos: Vector2) {
+    if quest == nil do return
+
+    first_unlockable: ^Quest
+    for &q in gs.quests_system.quests {
+        if !q.is_unlocked {
+            first_unlockable = &q
+            break
+        }
+    }
+
+    if first_unlockable == nil do return
+
+    required_skill_name := ""
+    for skill in gs.skills_system.skills {
+        if skill.type == first_unlockable.required_skill {
+            required_skill_name = skill.name
+            break
+        }
+    }
+
+    cfg := gs.ui_config.quests.next_quest
+    push_z_layer(.ui)
+    draw_sprite(pos,
+        .next_skill_panel_bg,
+        pivot = .center_center,
+        color_override = v4{1,1,1,0},
+        z_layer = .ui
+    )
+
+    title_pos := pos + v2{cfg.title_offset_x, cfg.title_offset_y}
+    draw_text(
+        title_pos,
+        "Next Available Quest",
+        col = Colors.text * v4{1,1,1,1},
+        scale = 1.2,
+        pivot = .center_left,
+        z_layer = .ui,
+    )
+
+    name_pos := pos + v2{cfg.name_offset_x, cfg.name_offset_y}
+    draw_text(
+        name_pos,
+        first_unlockable.name,
+        col = Colors.text * v4{1,1,1,1},
+        pivot = .center_left,
+        z_layer = .ui
+    )
+
+    desc_pos := pos + v2{cfg.desc_offset_x, cfg.desc_offset_y}
+    draw_text(
+        desc_pos,
+        first_unlockable.description,
+        col = Colors.text * v4{1,1,1,1},
+        pivot = .center_left,
+        z_layer = .ui
+    )
+
+    required_skill := first_unlockable.required_skill
+    required_level := first_unlockable.required_skill_levels[0]
+
+    level_pos := pos + v2{cfg.level_req_offset_x, cfg.level_req_offset_y}
+    draw_text(
+        level_pos,
+        fmt.tprintf("Requires %s Level %d", required_skill_name, first_unlockable.required_skill_levels[0]),
+        col = Colors.text * v4{1,1,1,1},
+        pivot = .center_left,
+        z_layer = .ui
     )
 }
 
@@ -2722,14 +2832,15 @@ init_skills_system :: proc() -> Skills_System {
     return system
 }
 
-calculate_xp_boost :: proc(skill: ^Skill) -> f32{
-    if skill == nil || skill.type != .xp_boost {
-        return 1.0
+calculate_xp_boost :: proc(system: ^Skills_System) -> f32 {
+    for &skill in system.skills {
+        if skill.is_unlocked && skill.type == .xp_boost {
+            base_boost := XP.BASE_XP_BOOST
+            level_boost := XP.XP_BOOST_PER_LEVEL * f32(skill.level - 1)
+            return 1.0 + base_boost + level_boost
+        }
     }
-
-    base_boost := XP.BASE_XP_BOOST
-    level_boost := XP.XP_BOOST_PER_LEVEL * f32(skill.level - 1)
-    return 1.0 + base_boost + level_boost
+    return 1.0
 }
 
 calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
@@ -2749,16 +2860,16 @@ calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
     return base_bonus * f32(skill.level)
 }
 
-add_xp_to_active_skill :: proc(system: ^Skills_System, base_xp: int) {
+add_xp_to_active_skill :: proc(system: ^Skills_System, base_xp: int) -> int {
     if system.active_skill == nil {
-        return
+        return 0.0
     }
 
     if system.active_skill.level >= XP.MAX_LEVEL {
-        return
+        return 0.0
     }
 
-    xp_multiplier := calculate_xp_boost(system.active_skill)
+    xp_multiplier := calculate_xp_boost(system)
     total_xp := int(f32(base_xp) * xp_multiplier)
     prev_level := system.active_skill.level
 
@@ -2780,6 +2891,8 @@ add_xp_to_active_skill :: proc(system: ^Skills_System, base_xp: int) {
     if system.active_skill.level > prev_level {
         check_quest_unlocks(system.active_skill)
     }
+
+    return total_xp
 }
 
 check_skills_unlock :: proc(system: ^Skills_System) {
