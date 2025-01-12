@@ -239,6 +239,12 @@ xform_scale :: proc(scale: Vector2) -> Matrix4 {
 	return linalg.matrix4_scale(v3{scale.x, scale.y, 1});
 }
 
+sign :: proc(x: f32) -> f32 {
+    if x < 0 do return -1
+    if x > 0 do return 1
+    return 0
+}
+
 Pivot :: enum {
 	bottom_left,
 	bottom_center,
@@ -1051,25 +1057,16 @@ draw_player_at_pos :: proc(en: ^Entity, pos: Vector2) {
     xform *= xform_scale(v2{0.38, 0.38})
     draw_sprite(pos, .player, pivot = .bottom_center, xform=xform, z_layer=.player)
 
-    bow_offset := v2{15, 22}
+    bow_offset := v2{0, 22}
     bow_pos := pos + bow_offset
+
+    fmt.println("Drawing bow with angle:", en.bow_angle)
     bow_xform := Matrix4(1)
     bow_xform *= xform_translate(bow_pos)
-
-    target := find_random_target()
-    angle_deg: f32
-    if target != nil {
-        dir := target.pos - pos
-        angle := math.atan2(dir.y, dir.x)
-        angle_deg = math.to_degrees(angle)
-    } else {
-        angle_deg = 0
-    }
-
-    bow_xform *= xform_rotate(angle_deg)
+    bow_xform *= xform_rotate(en.bow_angle)
     bow_xform *= xform_scale(v2{0.2, 0.2})
 
-    draw_sprite(v2{0,0}, .bow, pivot = .center_center, xform = bow_xform, z_layer = .bow)
+    draw_sprite(v2{0,0}, .bow, pivot = .center_left, xform = bow_xform, z_layer = .bow)
 }
 
 draw_dummy_at_pos :: proc(en: ^Entity){
@@ -1164,21 +1161,45 @@ update_player :: proc(player: ^Entity, dt: f32) {
     player.shoot_cooldown -= dt
     target := find_random_target()
 
-    if target != nil && player.shoot_cooldown <= 0 {
-        base_cooldown := SHOOT_COOLDOWN
-        if system := &gs.skills_system; system.is_unlocked {
-            for &skill in system.skills {
-                if skill.is_unlocked && skill.type == .speed_boost {
-                    speed_bonus := calculate_skill_bonus(&skill)
-                    base_cooldown *= (1.0 - f64(speed_bonus))
-                }
-            }
+    if target != nil {
+        shoot_pos := v2{-440, -320} + v2{30, 40}
+        dummy_center := target.pos + v2{0, 25}
+
+        direction := dummy_center - shoot_pos
+        angle := math.atan2(direction.y, direction.x)
+        player.target_bow_angle = math.to_degrees(angle)
+
+        rot_speed := 720.0 * dt
+        angle_diff := player.target_bow_angle - player.bow_angle
+
+        for angle_diff > 180 do angle_diff -= 360
+        for angle_diff < -180 do angle_diff += 360
+
+        if abs(angle_diff) < rot_speed {
+            player.bow_angle = player.target_bow_angle
+        } else {
+            player.bow_angle += sign(angle_diff) * rot_speed
         }
 
-        if player.arrow_count < player.max_arrows {
-            shoot_arrow(player, target)
+        for player.bow_angle < 0 do player.bow_angle += 360
+        for player.bow_angle >= 360 do player.bow_angle -= 360
+
+        if abs(angle_diff) < 5.0 && player.shoot_cooldown <= 0 {
+            base_cooldown := SHOOT_COOLDOWN
+            if system := &gs.skills_system; system.is_unlocked {
+                for &skill in system.skills {
+                    if skill.is_unlocked && skill.type == .speed_boost {
+                        speed_bonus := calculate_skill_bonus(&skill)
+                        base_cooldown *= (1.0 - f64(speed_bonus))
+                    }
+                }
+            }
+
+            if player.arrow_count < player.max_arrows {
+                shoot_arrow(player, target)
+            }
+            player.shoot_cooldown = f32(base_cooldown)
         }
-        player.shoot_cooldown = f32(base_cooldown)
     }
 }
 
@@ -1219,9 +1240,12 @@ ARROW_DAMAGE :: 50.0 // 20
 ELEMENTAL_ARROW_DAMAGE :: 40.0
 SHOOT_COOLDOWN :: 1.2
 ARROW_SPEED :: 1700.0
-ARROW_LIFETIME :: 2.0
-ACCURACY_VARIANCE :: 20.0
-GRAVITY_EFFECT :: 2000.0
+ARROW_LIFETIME :: 1.2
+ACCURACY_VARIANCE :: 40.0
+GRAVITY_EFFECT :: 6000.0
+HIT_CHANCE :: 0.90
+DUMMY_TARGET_WIDTH :: 64.0
+DUMMY_TARGET_HEIGHT :: 64.0
 
 update_arrow :: proc(e: ^Entity, dt: f32) {
     e.arrow_data.velocity.y -= GRAVITY_EFFECT * dt
@@ -1261,10 +1285,8 @@ update_arrow :: proc(e: ^Entity, dt: f32) {
 
         if aabb_collide(arrow_path, target.aabb) || aabb_collide(arrow_aabb, target.aabb) {
             if is_elemental{
-                fmt.println("IS ELEMENTAL")
                 damage_entity(&target, ELEMENTAL_ARROW_DAMAGE)
             }else{
-                fmt.println("IS NORMAL")
                 damage_entity(&target, ARROW_DAMAGE)
             }
             entity_destroy(e)
@@ -1299,23 +1321,37 @@ spawn_single_arrow :: proc(player: ^Entity, target: ^Entity, arrow_type: Arrow_T
     arrow := entity_create()
     if arrow == nil do return
 
-
     shoot_pos := v2{-440, -320} + v2{30, 40}
+    dummy_center := target.pos + v2{0, 25}
 
-    current_arrow_type := arrow_type
-
-    if current_arrow_type == .normal {
-        for &skill in gs.skills_system.skills {
-            if skill.is_unlocked && skill.type == .mystic_fletcher {
-                elemental_chance := calculate_skill_bonus(&skill)
-                if rand.float32() < elemental_chance {
-                    current_arrow_type = .elemental
-                }
-            }
-        }
+    target_variation := v2{
+        rand.float32_range(-DUMMY_TARGET_WIDTH/2, DUMMY_TARGET_WIDTH/2),
+        rand.float32_range(-DUMMY_TARGET_HEIGHT/2, DUMMY_TARGET_HEIGHT/2),
     }
 
-    setup_arrow(arrow, shoot_pos, target.pos + v2{0, 25}, current_arrow_type)
+    accurate_shot := rand.float32() < HIT_CHANCE
+    target_pos: Vector2
+    if accurate_shot {
+        target_pos = dummy_center + target_variation
+    } else {
+        miss_variation := v2{
+            rand.float32_range(-ACCURACY_VARIANCE, ACCURACY_VARIANCE),
+            rand.float32_range(-ACCURACY_VARIANCE, ACCURACY_VARIANCE),
+        }
+        target_pos = dummy_center + target_variation + miss_variation
+    }
+
+    direction := target_pos - shoot_pos
+    distance := linalg.length(direction)
+    direction_normalized := direction / distance
+
+    gravity := GRAVITY_EFFECT
+    arc_height := distance * 0.2
+    vertical_velocity := math.sqrt(2 * f32(gravity) * arc_height)
+    initial_velocity := direction_normalized * ARROW_SPEED + v2{0, vertical_velocity}
+
+    setup_arrow(arrow, shoot_pos, target_pos, arrow_type)
+    arrow.arrow_data.velocity = initial_velocity
     player.arrow_count += 1
 }
 
@@ -1373,6 +1409,8 @@ Entity :: struct {
 	max_health: f32,
 	aabb: Vector4,
 	img_id: Image_Id,
+	bow_angle: f32,
+	target_bow_angle: f32,
 }
 
 entity_data: [Entity_Kind]Entity
@@ -1544,10 +1582,12 @@ entity_destroy :: proc(entity: ^Entity) {
 // :setups
 
 setup_player :: proc(e: ^Entity) {
-	e.kind = .player
+    e.kind = .player
     e.flags |= { .allocated }
     e.max_arrows = 1
     e.arrow_count = 0
+    e.bow_angle = 0
+    e.target_bow_angle = 0
 }
 
 setup_dummy :: proc(e: ^Entity){
@@ -1572,7 +1612,7 @@ setup_dummy :: proc(e: ^Entity){
     e.aabb = aabb_make(e.pos, dummy_size, Pivot.bottom_center)
 }
 
-setup_arrow :: proc(e: ^Entity, start_pos: Vector2, target_pos: Vector2, arrow_type := Arrow_Type.normal){
+setup_arrow :: proc(e: ^Entity, start_pos: Vector2, target_pos: Vector2, arrow_type := Arrow_Type.normal) {
     e.kind = .arrow
     e.flags |= {.allocated}
     e.pos = start_pos
@@ -1581,15 +1621,9 @@ setup_arrow :: proc(e: ^Entity, start_pos: Vector2, target_pos: Vector2, arrow_t
     distance := linalg.length(direction)
     flight_time := distance / ARROW_SPEED
 
-    target_with_variance := target_pos + v2{
-        rand.float32_range(-ACCURACY_VARIANCE, ACCURACY_VARIANCE),
-        rand.float32_range(-ACCURACY_VARIANCE, ACCURACY_VARIANCE),
-    }
-
-    direction_to_target := target_with_variance - start_pos
-    direction_normalized := direction_to_target / linalg.length(direction_to_target)
-
+    direction_normalized := direction / distance
     base_velocity := direction_normalized * ARROW_SPEED
+
     vertical_boost := GRAVITY_EFFECT * flight_time * 0.5
 
     e.arrow_data = Arrow_Data {
