@@ -1057,10 +1057,9 @@ draw_player_at_pos :: proc(en: ^Entity, pos: Vector2) {
     xform *= xform_scale(v2{0.38, 0.38})
     draw_sprite(pos, .player, pivot = .bottom_center, xform=xform, z_layer=.player)
 
-    bow_offset := v2{0, 22}
+    bow_offset := v2{2, 25}
     bow_pos := pos + bow_offset
 
-    fmt.println("Drawing bow with angle:", en.bow_angle)
     bow_xform := Matrix4(1)
     bow_xform *= xform_translate(bow_pos)
     bow_xform *= xform_rotate(en.bow_angle)
@@ -1163,43 +1162,34 @@ update_player :: proc(player: ^Entity, dt: f32) {
 
     if target != nil {
         shoot_pos := v2{-440, -320} + v2{30, 40}
-        dummy_center := target.pos + v2{0, 25}
+        dir := target.pos - shoot_pos
+        angle := math.atan2(dir.y, dir.x)
+        target_degrees := math.to_degrees(angle)
 
-        direction := dummy_center - shoot_pos
-        angle := math.atan2(direction.y, direction.x)
-        player.target_bow_angle = math.to_degrees(angle)
+        for target_degrees < 0 do target_degrees += 360
+        for target_degrees >= 360 do target_degrees -= 360
 
-        rot_speed := 720.0 * dt
-        angle_diff := player.target_bow_angle - player.bow_angle
+        player.target_bow_angle = target_degrees
+    }
 
-        for angle_diff > 180 do angle_diff -= 360
-        for angle_diff < -180 do angle_diff += 360
+    rot_speed := 720.0 * dt
+    angle_diff := player.target_bow_angle - player.bow_angle
 
-        if abs(angle_diff) < rot_speed {
-            player.bow_angle = player.target_bow_angle
-        } else {
-            player.bow_angle += sign(angle_diff) * rot_speed
-        }
+    for angle_diff > 180 do angle_diff -= 360
+    for angle_diff < -180 do angle_diff += 360
 
-        for player.bow_angle < 0 do player.bow_angle += 360
-        for player.bow_angle >= 360 do player.bow_angle -= 360
+    if abs(angle_diff) < rot_speed {
+        player.bow_angle = player.target_bow_angle
+    } else {
+        player.bow_angle += sign(angle_diff) * rot_speed
+    }
 
-        if abs(angle_diff) < 5.0 && player.shoot_cooldown <= 0 {
-            base_cooldown := SHOOT_COOLDOWN
-            if system := &gs.skills_system; system.is_unlocked {
-                for &skill in system.skills {
-                    if skill.is_unlocked && skill.type == .speed_boost {
-                        speed_bonus := calculate_skill_bonus(&skill)
-                        base_cooldown *= (1.0 - f64(speed_bonus))
-                    }
-                }
-            }
+    for player.bow_angle < 0 do player.bow_angle += 360
+    for player.bow_angle >= 360 do player.bow_angle -= 360
 
-            if player.arrow_count < player.max_arrows {
-                shoot_arrow(player, target)
-            }
-            player.shoot_cooldown = f32(base_cooldown)
-        }
+    if target != nil && player.shoot_cooldown <= 0 {
+        shoot_arrow(player, target)
+        player.shoot_cooldown = SHOOT_COOLDOWN
     }
 }
 
@@ -1284,10 +1274,12 @@ update_arrow :: proc(e: ^Entity, dt: f32) {
         }
 
         if aabb_collide(arrow_path, target.aabb) || aabb_collide(arrow_aabb, target.aabb) {
-            if is_elemental{
-                damage_entity(&target, ELEMENTAL_ARROW_DAMAGE)
-            }else{
-                damage_entity(&target, ARROW_DAMAGE)
+            if is_elemental {
+                damage := ELEMENTAL_ARROW_DAMAGE
+                damage_entity(&target, f32(damage), is_elemental = true)
+            } else {
+                damage := ARROW_DAMAGE
+                damage_entity(&target, f32(damage), is_elemental = false)
             }
             entity_destroy(e)
             return
@@ -1304,9 +1296,15 @@ shoot_arrow :: proc(player: ^Entity, target: ^Entity){
     }
 
     multi_shot_chance := f32(0)
+    mystic_shot_chance := f32(0)
     for &skill in gs.skills_system.skills {
-        if skill.is_unlocked && skill.type == .storm_arrows {
-            multi_shot_chance = calculate_skill_bonus(&skill)
+        if skill.is_unlocked {
+            #partial switch skill.type {
+                case .storm_arrows:
+                    multi_shot_chance = calculate_skill_bonus(&skill)
+                case .mystic_fletcher:
+                    mystic_shot_chance = calculate_skill_bonus(&skill)
+            }
         }
     }
 
@@ -1315,13 +1313,17 @@ shoot_arrow :: proc(player: ^Entity, target: ^Entity){
     if rand.float32() < multi_shot_chance {
         spawn_single_arrow(player, target, .normal)
     }
+
+    if rand.float32() < mystic_shot_chance {
+        spawn_single_arrow(player, target, .elemental)
+    }
 }
 
 spawn_single_arrow :: proc(player: ^Entity, target: ^Entity, arrow_type: Arrow_Type) {
     arrow := entity_create()
     if arrow == nil do return
 
-    shoot_pos := v2{-440, -320} + v2{30, 40}
+    shoot_pos := v2{-440, -320} + v2{10, 25}
     dummy_center := target.pos + v2{0, 25}
 
     target_variation := v2{
@@ -1361,13 +1363,11 @@ calculate_arrow_damage :: proc(system: ^Skills_System) -> f32 {
 
     for &skill in system.skills {
         if skill.is_unlocked {
-        #partial switch skill.type {
-            case .strength_boost: {
-                 strength_bonus := 0.10 + 0.10 * f32(skill.level - 1)
-                 final_damage *= f64(1.0 + strength_bonus)
-            }
-            case .mystic_fletcher:
-                final_damage *= f64(1.4)
+            #partial switch skill.type {
+                case .strength_boost: {
+                    strength_bonus := 0.10 + 0.10 * f32(skill.level - 1)
+                    final_damage *= f64(1.0 + strength_bonus)
+                }
             }
         }
     }
@@ -1420,29 +1420,31 @@ Entity_Handle :: struct {
     index: int,
 }
 
-damage_entity :: proc(e: ^Entity, base_damage: f32) {
+damage_entity :: proc(e: ^Entity, base_damage: f32, is_elemental := false) {
     damage := base_damage
     crit_occurred := false
 
     if system := &gs.skills_system; system.is_unlocked {
         for &skill in system.skills {
-            if skill.is_unlocked {
-                #partial switch skill.type {
-                    case .strength_boost:
-                        damage = calculate_arrow_damage(system)
-                    case .critical_boost:
-                        crit_chance := calculate_skill_bonus(&skill)
-                        if rand.float32() < crit_chance {
-                            damage *= 2.0
-                            crit_occurred = true
-                        }
-                    case .mystic_fletcher:
-                        damage = calculate_arrow_damage(system)
+            if skill.is_unlocked && skill.type == .strength_boost {
+                strength_bonus := 0.10 + 0.10 * f32(skill.level - 1)
+                damage *= f32(1.0 + strength_bonus)
+            }
+        }
+
+        for &skill in system.skills {
+            if skill.is_unlocked && skill.type == .critical_boost {
+                crit_chance := calculate_skill_bonus(&skill)
+                if rand.float32() < crit_chance {
+                    crit_occurred = true
                 }
+                break
             }
         }
 
         if crit_occurred {
+            damage *= 2.0
+
             for &skill in system.skills {
                 if skill.is_unlocked && skill.type == .warrior_stamina {
                     instant_shot_chance := calculate_skill_bonus(&skill)
@@ -1479,14 +1481,32 @@ damage_entity :: proc(e: ^Entity, base_damage: f32) {
     }
 
     text_pos := e.pos + v2{-40, 20}
+
+    pos_offset_x := rand.float32_range(-20, 20)
+    pos_offset_y := rand.float32_range(-20, 20)
+    text_pos += v2{pos_offset_x, pos_offset_y}
+
+    velocity_x := rand.float32_range(-100, 100)
+    velocity_y := rand.float32_range(100, 200)
+    text_color := v4{1,1,1,1}
+    text_scale := f32(0.6)
+    target_scale := f32(1.0)
+
+    if is_elemental {
+        text_color = v4{0.74, 0.09, 0.64, 1}
+    } else if crit_occurred {
+        text_color = v4{1,0,0,1}
+        target_scale = 1.2
+    }
+
     add_floating_text_params(
         text_pos,
         fmt.tprintf("%d", int(damage)),
-        color = v4{1,1,1,1},
-        scale = 0.6,
-        target_scale = 1.0,
+        color = text_color,
+        scale = text_scale,
+        target_scale = target_scale,
         lifetime = 0.65,
-        velocity = v2{0, 150},
+        velocity = v2{velocity_x, velocity_y},
     )
 
     e.health -= damage
@@ -2946,7 +2966,7 @@ init_skills_system :: proc() -> Skills_System {
         {.speed_boost, "Speed Mastery", "Increases attack speed by 5% per level"},
         {.critical_boost, "Critical Mastery", "Increases critical hit chance by 1% per level"},
         {.storm_arrows, "Storm of Arrows", "Gain 5% chance per level to fire an additional arrow"},
-        {.mystic_fletcher, "Mystic Fletcher", "Gain 5% chance per level to fire an elemental arrow that deals extra damage"},
+        {.mystic_fletcher, "Mystic Fletcher", "Gain 5% chance per level to fire an additional elemental arrow that deals extra damage"},
         {.warrior_stamina, "Warrior's Stamina", "Gain 5% change per leve to instantly fire another arrow after a critical hit"}
     }
 
@@ -2988,10 +3008,10 @@ calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
         case .xp_boost: base_bonus = 0.05
         case .strength_boost: base_bonus = 0.05
         case .speed_boost: base_bonus = 0.05
-        case .critical_boost: base_bonus = 1.0 // 0.01
+        case .critical_boost: base_bonus = 0.01 // 0.01
         case .storm_arrows: base_bonus = 0.05
-        case .mystic_fletcher: base_bonus = 0.05
-        case .warrior_stamina: base_bonus = 1.0 // 0.05
+        case .mystic_fletcher: base_bonus = 1.0
+        case .warrior_stamina: base_bonus = 0.02 // 0.02
         case: return 0.0
     }
 
@@ -3724,6 +3744,7 @@ update_floating_texts :: proc(dt: f32) {
         }
     }
 }
+
 render_floating_texts :: proc() {
     for ft in floating_texts {
         if ft.lifetime > 0 {
