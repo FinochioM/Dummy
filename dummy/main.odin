@@ -1013,10 +1013,14 @@ render :: proc() {
 		}
 	}
 
+    render_floating_texts()
+
     if gs.skills_system.is_unlocked {
         render_skill_menu_button()
-        render_quest_menu_button()
-        render_floating_texts()
+
+        if has_unlocked_quests(&gs.quests_system) {
+            render_quest_menu_button()
+        }
 
         if gs.skills_system.menu_open {
             render_skills_ui()
@@ -2824,6 +2828,16 @@ draw_next_quest_panel :: proc(quest: ^Quest, pos: Vector2) {
     )
 }
 
+has_unlocked_quests :: proc(system: ^Quests_System) -> bool {
+    for quest in system.quests {
+        if quest.is_unlocked {
+            return true
+        }
+    }
+
+    return false
+}
+
 //
 // :skills
 Skill_Type :: enum {
@@ -2848,13 +2862,20 @@ Skill :: struct {
     display_xp: f32,
 }
 
+Skills_Menu_Type :: enum {
+    normal,
+    advanced,
+}
+
 Skills_System :: struct {
     skills: [dynamic]Skill,
+    advanced_skills: [dynamic]Skill,
     active_skill: ^Skill,
     dummies_killed: int,
     is_unlocked: bool,
     gold: int,
     menu_open: bool,
+    active_menu: Skills_Menu_Type,
 }
 
 SKILL_COSTS :: [Skill_Type]int {
@@ -2880,6 +2901,16 @@ Skills_UI_Config :: struct {
         pos_y: f32,
         size_x: f32,
         size_y: f32,
+        sprite: Image_Id,
+    },
+    switch_button: struct {
+        offset_x: f32,
+        offset_y: f32,
+        size_x: f32,
+        size_y: f32,
+        bounds_x: f32,
+        bounds_y: f32,
+        text_scale: f32,
         sprite: Image_Id,
     },
     next_skill: struct {
@@ -2953,11 +2984,13 @@ Skills_UI_Config :: struct {
 init_skills_system :: proc() -> Skills_System {
     system := Skills_System{
         skills = make([dynamic]Skill),
+        advanced_skills = make([dynamic]Skill),
         active_skill = nil,
         dummies_killed = 0,
         is_unlocked = false,
         gold = 100,
         menu_open = false,
+        active_menu = .normal,
     }
 
     skill_data := []struct{type: Skill_Type, name, desc: string}{
@@ -2968,6 +3001,10 @@ init_skills_system :: proc() -> Skills_System {
         {.storm_arrows, "Storm of Arrows", "Gain 5% chance per level to fire an additional arrow"},
         {.mystic_fletcher, "Mystic Fletcher", "Gain 5% chance per level to fire an additional elemental arrow that deals extra damage"},
         {.warrior_stamina, "Warrior's Stamina", "Gain 5% change per leve to instantly fire another arrow after a critical hit"}
+    }
+
+    advanced_skill_data := []struct{type: Skill_Type, name, desc: string} {
+        // Add later.
     }
 
     for data in skill_data {
@@ -2982,6 +3019,20 @@ init_skills_system :: proc() -> Skills_System {
         }
 
         append(&system.skills, skill)
+    }
+
+    for data in advanced_skill_data {
+        skill := Skill {
+            type = data.type,
+            name = data.name,
+            level = 0,
+            current_xp = 0,
+            xp_to_next_level = 100,
+            description = data.desc,
+            is_unlocked = false,
+        }
+
+        append(&system.advanced_skills, skill)
     }
 
     return system
@@ -3010,7 +3061,7 @@ calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
         case .speed_boost: base_bonus = 0.05
         case .critical_boost: base_bonus = 0.01 // 0.01
         case .storm_arrows: base_bonus = 0.05
-        case .mystic_fletcher: base_bonus = 1.0
+        case .mystic_fletcher: base_bonus = 0.05
         case .warrior_stamina: base_bonus = 0.02 // 0.02
         case: return 0.0
     }
@@ -3096,6 +3147,44 @@ render_skills_ui :: proc() {
         pivot = .center_center,
         color_override = v4{0,0,0,1-alpha})
 
+    button_pos := menu_pos + v2{cfg.switch_button.offset_x, cfg.switch_button.offset_y}
+    button_size := v2{cfg.switch_button.size_x, cfg.switch_button.size_y}
+    btn_bounds := v2{cfg.switch_button.bounds_x, cfg.switch_button.bounds_y}
+
+    draw_sprite_with_size(
+        button_pos,
+        button_size,
+        cfg.switch_button.sprite,
+        pivot = .center_center,
+        z_layer = .ui,
+    )
+
+    button_text := gs.skills_system.active_menu == .normal ? "Advanced" : "Normal"
+    draw_text(
+        button_pos,
+        button_text,
+        scale = auto_cast  cfg.switch_button.text_scale,
+        pivot = .center_center,
+        z_layer = .ui,
+    )
+
+
+    hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, btn_bounds)
+
+    if hover && key_just_pressed(.LEFT_MOUSE) {
+        gs.skills_system.active_menu = gs.skills_system.active_menu == .normal ? .advanced : .normal
+    }
+
+    if gs.skills_system.active_menu == .normal {
+        draw_normal_skills_content(menu_pos, alpha)
+    }else {
+        draw_advanced_skills_content(menu_pos, alpha)
+    }
+}
+
+draw_normal_skills_content :: proc(menu_pos: Vector2, alpha: f32){
+    cfg := gs.ui_config.skills
+
     next_skill_pos := menu_pos + v2{cfg.next_skill.offset_x, cfg.next_skill.offset_y}
 
     next_skill: ^Skill
@@ -3111,10 +3200,32 @@ render_skills_ui :: proc() {
     }
 
     unlocked_pos := menu_pos + v2{cfg.unlocked_skills.start_offset_x, cfg.unlocked_skills.start_offset_y}
-    draw_unlocked_skills(unlocked_pos, alpha)
+    draw_unlocked_normal_skills(unlocked_pos, alpha)
 }
 
-draw_unlocked_skills :: proc(start_pos: Vector2, alpha: f32) {
+
+draw_advanced_skills_content :: proc(menu_pos: Vector2, alpha: f32){
+    cfg := gs.ui_config.skills
+
+    next_skill_pos := menu_pos + v2{cfg.next_skill.offset_x, cfg.next_skill.offset_y}
+
+    next_skill: ^Skill
+    for &skill in gs.skills_system.advanced_skills {
+        if !skill.is_unlocked {
+            next_skill = &skill
+            break
+        }
+    }
+
+    if next_skill != nil {
+        draw_next_skill_panel(next_skill, next_skill_pos, alpha)
+    }
+
+    unlocked_pos := menu_pos + v2{cfg.unlocked_skills.start_offset_x, cfg.unlocked_skills.start_offset_y}
+    draw_unlocked_advanced_skills(unlocked_pos, alpha)
+}
+
+draw_unlocked_normal_skills :: proc(start_pos: Vector2, alpha: f32) {
     cfg := gs.ui_config.skills.unlocked_skills
     menu_cfg := gs.ui_config.skills.menu
     push_z_layer(.ui)
@@ -3263,36 +3374,157 @@ draw_unlocked_skills :: proc(start_pos: Vector2, alpha: f32) {
 
         pos.y -= spacing
     }
+}
 
-    if f32(total_content_height) > visible_height {
-        scrollbar_width := 8.0
-        scrollbar_height := content_height
-        scrollbar_pos := v2{
-            start_pos.x + content_width * 0.5 + f32(scrollbar_width),
-            start_pos.y,
+draw_unlocked_advanced_skills :: proc(start_pos: Vector2, alpha: f32) {
+    cfg := gs.ui_config.skills.unlocked_skills
+    menu_cfg := gs.ui_config.skills.menu
+    push_z_layer(.ui)
+
+    content_height := menu_cfg.size_y * 0.7
+    content_width := menu_cfg.size_x * 0.8
+
+    spacing := cfg.spacing_y
+    visible_height := content_height
+
+    unlocked_count := 0
+    total_content_height := 0.0
+    for skill in gs.skills_system.advanced_skills {
+        if skill.is_unlocked {
+            unlocked_count += 1
+            total_content_height += f64(spacing)
         }
-
-        draw_rect_aabb(
-            scrollbar_pos,
-            v2{f32(scrollbar_width), scrollbar_height},
-            col = v4{0.2, 0.2, 0.2, alpha},
-            z_layer = .ui,
-        )
-
-        handle_ratio := visible_height / f32(total_content_height)
-        handle_height := scrollbar_height * handle_ratio
-        handle_pos_ratio := gs.ui.skills_scroll_pos / (f32(total_content_height) - visible_height)
-        handle_y_offset := (scrollbar_height - handle_height) * handle_pos_ratio
-
-        handle_pos := scrollbar_pos - v2{0, scrollbar_height * 0.5 - handle_height * 0.5} + v2{0, handle_y_offset}
-        draw_rect_aabb(
-            handle_pos,
-            v2{f32(scrollbar_width), handle_height},
-            col = v4{0.4, 0.4, 0.4, alpha},
-            z_layer = .ui,
-        )
     }
 
+    if unlocked_count == 0 do return
+
+    if !gs.ui.skills_scroll_initialized {
+        gs.ui.skills_scroll_pos = 0
+        gs.ui.skills_scroll_initialized = true
+    }
+
+    if content_bounds := aabb_make(start_pos, v2{content_width, content_height}, Pivot.center_center);
+       aabb_contains(content_bounds, mouse_pos_in_world_space()) {
+        scroll_speed := 40.0
+        if key_down(.UP) {
+            gs.ui.skills_scroll_pos = max(0, gs.ui.skills_scroll_pos - f32(scroll_speed) * f32(sapp.frame_duration()))
+        }
+        if key_down(.DOWN) {
+            max_scroll := max(0, total_content_height - f64(visible_height))
+            gs.ui.skills_scroll_pos = min(f32(max_scroll), gs.ui.skills_scroll_pos + f32(scroll_speed) * f32(sapp.frame_duration()))
+        }
+    }
+
+    content_top := start_pos.y + content_height * 0.5
+    content_bottom := start_pos.y - content_height * 0.5
+
+    pos := v2{start_pos.x, content_top - spacing * 0.5} - v2{0, gs.ui.skills_scroll_pos}
+
+    mouse_pos := mouse_pos_in_world_space()
+
+    for &skill, i in gs.skills_system.advanced_skills {
+        if !skill.is_unlocked do continue
+        if pos.y + spacing < content_bottom || pos.y > content_top do continue
+
+        bar_width := cfg.xp_bar.bar_width
+        bar_height := cfg.xp_bar.bar_height
+        rect_width := cfg.xp_bar.rect_width
+        rect_height := cfg.xp_bar.rect_height
+        bar_pos := pos + v2{cfg.xp_bar.bar_pos_x, cfg.xp_bar.bar_pos_y}
+        rect_pos := pos + v2{cfg.xp_bar.rect_pos_x, cfg.xp_bar.rect_pos_y}
+
+        draw_sprite_with_size(
+            bar_pos,
+            v2{bar_width, bar_height},
+            cfg.xp_bar.bar_sprite,
+            pivot = .bottom_center,
+            z_layer = cfg.xp_bar.zlayer_xp
+        )
+
+        target_xp_ratio := f32(skill.current_xp) / f32(skill.xp_to_next_level)
+        animate_to_target_f32(&skill.display_xp, target_xp_ratio, f32(sapp.frame_duration()) * cfg.xp_bar.fill_speed)
+
+        draw_rect_aabb(
+            rect_pos,
+            v2{rect_width * skill.display_xp, rect_height},
+            col = Colors.xp_bar_fill,
+            z_layer = cfg.xp_bar.zlayer_xp_2
+        )
+
+        xp_text_pos := bar_pos + v2{bar_width + 10, 0}
+        draw_text(
+            xp_text_pos,
+            fmt.tprintf("%d/%d", skill.current_xp, skill.xp_to_next_level),
+            col = Colors.text * v4{1,1,1,1},
+            scale = 0.8,
+            pivot = .center_left,
+            z_layer = cfg.xp_bar.zlayer_xp
+        )
+
+        is_active := gs.skills_system.active_skill == &gs.skills_system.advanced_skills[i]
+
+        if pos.y <= content_top && pos.y >= content_bottom {
+            radio_pos := pos + v2{cfg.radio_button.offset_x, cfg.radio_button.offset_y}
+            radio_sprite := is_active ? cfg.radio_button.selected_sprite : cfg.radio_button.unselected_sprite
+            radio_size := v2{cfg.radio_button.size_x, cfg.radio_button.size_y}
+            fitted_size := fit_size_to_square(radio_size)
+            radio_bounds := v2{cfg.radio_button.bounds_x, cfg.radio_button.bounds_y}
+
+            draw_nores_sprite_with_size(
+                radio_pos,
+                fitted_size,
+                radio_sprite,
+                pivot = .center_center,
+                color_override = v4{1,1,1,0},
+                z_layer = .ui
+            )
+
+            debug_button := false
+            click_area := aabb_make(radio_pos, radio_size + radio_bounds, Pivot.center_center)
+
+            if debug_button {
+                draw_rect_aabb_actually(click_area, col=v4{1,0,0,0.2}, z_layer=.ui)
+            }
+
+            name_pos := pos + v2{cfg.skill_name.offset_x, cfg.skill_name.offset_y}
+            draw_text(
+                name_pos,
+                skill.name,
+                col = Colors.text * v4{1,1,1,alpha},
+                scale = auto_cast cfg.skill_name.scale,
+                pivot = .center_left,
+                z_layer = .ui
+            )
+
+            level_pos := pos + v2{cfg.level_text.offset_x, cfg.level_text.offset_y}
+            draw_text(
+                level_pos,
+                fmt.tprintf("Level %d", skill.level),
+                col = Colors.text * v4{1,1,1,alpha},
+                scale = auto_cast cfg.level_text.scale,
+                pivot = .center_left,
+                z_layer = .ui
+            )
+
+            mouse_over_radio := aabb_contains(click_area, mouse_pos)
+
+            if mouse_over_radio {
+                gs.ui.skills_hover_tooltip_active = true
+                gs.ui.skills_hover_tooltip_skill = &gs.skills_system.advanced_skills[i]
+
+                tooltip_cfg := gs.ui_config.skills.tooltip
+                tooltip_pos := pos + v2{tooltip_cfg.offset_x, tooltip_cfg.offset_y}
+                draw_skill_tooltip(&gs.skills_system.advanced_skills[i], tooltip_pos)
+
+                if key_just_pressed(.LEFT_MOUSE) {
+                    old_active := gs.skills_system.active_skill
+                    gs.skills_system.active_skill = &gs.skills_system.advanced_skills[i]
+                }
+            }
+        }
+
+        pos.y -= spacing
+    }
 }
 
 unlock_skill :: proc(system: ^Skills_System, skill: ^Skill) {

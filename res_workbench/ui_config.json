@@ -13,6 +13,16 @@
       "size_y": 8,
       "sprite": "skills_button"
     },
+    "switch_button":{
+      "offset_x": 180.0,
+      "offset_y": -220.0,
+      "size_x": 30.0,
+      "size_y": 8.0,
+      "bounds_x": 120.0,
+      "bounds_y": 32.0,
+      "text_scale": 1.0,
+      "sprite": "next_skill_button_bg",
+    },
     "next_skill": {
       "offset_x": -400,
       "offset_y": 190,
@@ -34,11 +44,11 @@
     "unlocked_skills": {
       "start_offset_x": -210,
       "start_offset_y": 50,
-      "spacing_y": 50,
+      "spacing_y": 55,
       "radio_button": {
         "offset_x": 0,
         "offset_y": 0,
-        "size_x": 24,
+        "size_x": 32,
         "size_y": 24,
         "bounds_x": 10.0,
         "bounds_y": 10.0,
@@ -56,21 +66,21 @@
         "scale": 1.4
       },
       "xp_bar":{
-        "bar_width": 220.0,
+        "bar_width": 200.0,
         "bar_height": 5.0,
-        "bar_pos_x": 210,
-        "bar_pos_y": -25.0,
+        "bar_pos_x": 225,
+        "bar_pos_y": -30.0,
         "bar_sprite": "skill_xp_bar"
         "zlayer_xp": "xp_bars",
         "zlayer_xp_2": "ui",
         "fill_speed": 0.6,
-        "rect_width": 440,
+        "rect_width": 390,
         "rect_height": 8,
-        "rect_pos_x": -6.5,
-        "rect_pos_y": -25.0,
+        "rect_pos_x": 28,
+        "rect_pos_y": -29.3,
       },
     },
-    "tooltip": {
+    "tooltsip": {
       "offset_x": 585,
       "offset_y": -10,
       "size_x": 200,
