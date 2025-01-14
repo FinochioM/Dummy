@@ -588,6 +588,8 @@ Image_Id :: enum {
     quests_button,
     coin,
     skill_xp_bar,
+    back_focus,
+    front_focus,
 }
 
 Image :: struct {
@@ -1088,36 +1090,45 @@ focus_mode_skill_update :: proc(dt: f32) {
 
 focus_mode_skill_render :: proc() {
     if gs.skills_system.focus_mode_button_visible {
-        button_pos := v2{0, 100}
-        button_size := v2{120, 40}
+        cfg := gs.ui_config.skills
+        button_pos := v2{cfg.focus_mode.button_pos_x, cfg.focus_mode.button_pos_y}
+        button_size := v2{cfg.focus_mode.button_size_x, cfg.focus_mode.button_size_y}
+        button_bounds := v2{cfg.focus_mode.button_bounds_x, cfg.focus_mode.button_bounds_y}
         alpha := min(1.0, gs.skills_system.focus_mode_button_timer)
 
+        text_pos := button_pos + v2{cfg.focus_mode.text_pos_x, cfg.focus_mode.text_pos_y}
+
         glow_size := button_size * 1.2
-        draw_rect_aabb(
+
+        draw_sprite_with_size(
             button_pos,
-            glow_size,
-            col = v4{0.5, 0.3, 0.8, 0.3 * alpha},
+            button_size,
+            cfg.focus_mode.back_sprite,
+            color_override = v4{0.5, 0.3, 0.8, 0.3 * alpha},
+            pivot = .center_center,
             z_layer = .ui,
         )
 
-        draw_rect_aabb(
+        draw_sprite_with_size(
             button_pos,
             button_size,
-            col = v4{0.4, 0.2, 0.6, alpha},
+            cfg.focus_mode.front_sprite,
+            color_override = v4{0.4, 0.2, 0.6, alpha},
+            pivot = .center_center,
             z_layer = .ui,
         )
 
         draw_text(
-            button_pos,
+            text_pos,
             "Focus Mode!",
             col = v4{1, 1, 1, alpha},
-            scale = 1.2,
+            scale = auto_cast cfg.focus_mode.text_scale,
             pivot = .center_center,
             z_layer = .ui,
         )
 
         mouse_pos := mouse_pos_in_world_space()
-        if is_point_in_rect(mouse_pos, button_pos, button_size) && key_just_pressed(.LEFT_MOUSE) {
+        if is_point_in_rect(mouse_pos, button_pos, button_bounds) && key_just_pressed(.LEFT_MOUSE) {
             gs.skills_system.focus_mode_active = true
             gs.skills_system.focus_mode_timer = FOCUS_MODE_DURATION
             gs.skills_system.focus_mode_button_visible = false
@@ -3082,6 +3093,23 @@ Skills_UI_Config :: struct {
         text_scale: f32,
         sprite: Image_Id,
     },
+    focus_mode: struct{
+        button_pos_x: f32,
+        button_pos_y: f32,
+        button_size_x: f32,
+        button_size_y: f32,
+        button_bounds_x: f32,
+        button_bounds_y: f32,
+        glow_size_x: f32,
+        glow_size_y: f32,
+        back_sprite: Image_Id,
+        front_sprite: Image_Id,
+        text_scale: f32,
+        text_pos_x: f32,
+        text_pos_y: f32,
+        focus_text_pos_x: f32,
+        focus_text_pos_y: f32,
+    },
     next_skill: struct {
         offset_x: f32,
         offset_y: f32,
@@ -3242,7 +3270,7 @@ calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
         case .warrior_stamina: base_bonus = 0.02 // 0.02
 
         // ADVANCED
-        case .formation_mastery: base_bonus = 1.0 // 0.02
+        case .formation_mastery: base_bonus = 0.2 // 0.02
         case .battle_meditation: base_bonus = 1.0 // 0.01
         case: return 0.0
     }
