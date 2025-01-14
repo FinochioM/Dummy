@@ -958,7 +958,15 @@ update :: proc() {
             #partial switch en.kind {
                 case .player: update_player(&en, f32(dt))
                 case .arrow: update_arrow(&en, f32(dt))
-                case .dummy: update_current_animation(&en.animations, f32(dt))
+                case .dummy: {
+                    update_current_animation(&en.animations, f32(dt))
+                    if .ghost_dummy in en.flags {
+                        en.ghost_timer -= f32(dt)
+                        if en.ghost_timer <= 0 {
+                            entity_destroy(&en)
+                        }
+                    }
+                }
             }
         }
 	}
@@ -1079,12 +1087,14 @@ draw_dummy_at_pos :: proc(en: ^Entity){
     xform := Matrix4(1)
     xform *= xform_scale(v2{0.35, 0.35})
 
+    color_override := .ghost_dummy in en.flags ? v4{1, 1, 1, 0.5} : v4{0, 0, 0, 0}
+
     health_percent := en.health / en.max_health
 
     if en.animations.current_animation == "" {
-        draw_sprite(v2{en.pos.x, en.pos.y - 10}, .dummy_hit1, pivot = .bottom_center, xform=xform, z_layer=.player)
+        draw_sprite(v2{en.pos.x, en.pos.y - 10}, .dummy_hit1, pivot = .bottom_center, xform=xform, z_layer=.player, color_override = color_override)
     }else{
-        draw_current_animation(&en.animations, v2{en.pos.x, en.pos.y - 10}, pivot = .bottom_center, xform = xform, z_layer = .player)
+        draw_current_animation(&en.animations, v2{en.pos.x, en.pos.y - 10}, pivot = .bottom_center, xform = xform, z_layer = .player, color_override = color_override)
     }
 
     if en.health < en.max_health {
@@ -1151,11 +1161,11 @@ mouse_pos_in_world_space :: proc() -> Vector2 {
 // :dummies
 DUMMY_MAX_HEALTH :: 100.0
 
-spawn_dummy :: proc(position: Vector2) -> ^Entity {
+spawn_dummy :: proc(position: Vector2, is_ghost := false) -> ^Entity {
     dummy := entity_create()
     if dummy == nil do return nil
 
-    setup_dummy(dummy)
+    setup_dummy(dummy, is_ghost)
     dummy.pos = position
 
     return dummy
@@ -1388,6 +1398,7 @@ calculate_arrow_damage :: proc(system: ^Skills_System) -> f32 {
 
 Entity_Flags :: enum {
 	allocated,
+	ghost_dummy,
 	//physics
 }
 
@@ -1418,6 +1429,7 @@ Entity :: struct {
 	img_id: Image_Id,
 	bow_angle: f32,
 	target_bow_angle: f32,
+	ghost_timer: f32,
 }
 
 entity_data: [Entity_Kind]Entity
@@ -1581,11 +1593,37 @@ entity_destroy :: proc(entity: ^Entity) {
     }
 
     if entity.kind == .dummy {
+        if .ghost_dummy not_in entity.flags {
+            for &skill in gs.skills_system.advanced_skills {
+                if skill.is_unlocked && skill.type == .formation_mastery {
+                    ghost_chance := calculate_skill_bonus(&skill)
+                    if rand.float32() < ghost_chance {
+                        ghost_pos := entity.pos
+                        ghost := spawn_dummy(ghost_pos, true)
+                        if ghost != nil {
+                            add_floating_text_params(
+                                ghost_pos + v2{0, 50},
+                                "Ghost Dummy Spawned!",
+                                v4{0.7, 0.7, 1.0, 1.0},
+                                scale = 0.8,
+                                target_scale = 1.0,
+                                lifetime = 1.0,
+                                velocity = v2{0, 75},
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         gs.skills_system.dummies_killed += 1
         check_skills_unlock(&gs.skills_system)
 
         if gs.skills_system.is_unlocked {
             base_xp := 50
+            if .ghost_dummy in entity.flags {
+                base_xp *= 2
+            }
 
             total_xp := add_xp_to_active_skill(&gs.skills_system, base_xp)
 
@@ -1617,12 +1655,17 @@ setup_player :: proc(e: ^Entity) {
     e.target_bow_angle = 0
 }
 
-setup_dummy :: proc(e: ^Entity){
+setup_dummy :: proc(e: ^Entity, is_ghost := false){
     debug := true
     e.kind = .dummy
     e.flags |= { .allocated }
     e.health = DUMMY_MAX_HEALTH
     e.max_health = DUMMY_MAX_HEALTH
+
+    if is_ghost {
+        e.flags |= { .ghost_dummy }
+        e.ghost_timer = 5.0
+    }
 
     animations := create_animation_collection()
 
@@ -2872,6 +2915,7 @@ Skill_Type :: enum {
     storm_arrows,
     mystic_fletcher,
     warrior_stamina,
+    formation_mastery,
 }
 
 Skill :: struct {
@@ -2910,6 +2954,7 @@ SKILL_COSTS :: [Skill_Type]int {
     .storm_arrows = 10,
     .mystic_fletcher = 10,
     .warrior_stamina = 10,
+    .formation_mastery = 10,
 }
 
 Skills_UI_Config :: struct {
@@ -2939,6 +2984,12 @@ Skills_UI_Config :: struct {
     next_skill: struct {
         offset_x: f32,
         offset_y: f32,
+        empty_panel_pos_x: f32,
+        empty_panel_pos_y: f32,
+        empty_panel_size_x: f32,
+        empty_panel_size_y: f32,
+        empty_title_offset_x: f32,
+        empty_title_offset_y: f32,
         panel_size_x: f32,
         panel_size_y: f32,
         title_offset_x: f32,
@@ -3027,7 +3078,7 @@ init_skills_system :: proc() -> Skills_System {
     }
 
     advanced_skill_data := []struct{type: Skill_Type, name, desc: string} {
-        // Add later.
+        {.formation_mastery, "Formation Mastery", "When a dummy dies, gain a 2% chance per level to spawn a ghost dummy that lasts for 5 seconds and grants double XP when killed"},
     }
 
     for data in skill_data {
@@ -3086,6 +3137,7 @@ calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
         case .storm_arrows: base_bonus = 0.05
         case .mystic_fletcher: base_bonus = 0.05
         case .warrior_stamina: base_bonus = 0.02 // 0.02
+        case .formation_mastery: base_bonus = 1.0
         case: return 0.0
     }
 
@@ -3149,6 +3201,7 @@ get_skill_cost :: proc(type: Skill_Type) -> int {
         case .storm_arrows: return 10
         case .mystic_fletcher: return 10
         case .warrior_stamina: return 10
+        case .formation_mastery: return 10
     }
     return 0
 }
@@ -3219,7 +3272,7 @@ draw_normal_skills_content :: proc(menu_pos: Vector2, alpha: f32){
     if next_skill != nil{
         draw_next_skill_panel(next_skill, next_skill_pos, alpha)
     }else {
-        draw_empty_next_skill_panel(next_skill_pos)
+        draw_empty_next_skill_panel()
     }
 
     unlocked_pos := menu_pos + v2{cfg.unlocked_skills.start_offset_x, cfg.unlocked_skills.start_offset_y}
@@ -3544,41 +3597,72 @@ unlock_skill :: proc(system: ^Skills_System, skill: ^Skill) {
     if system.gold >= cost {
         system.gold -= cost
 
-        if !any_skill_unlocked(system) {
-            skill.is_unlocked = true
+        is_advanced := false
+        for &s in system.advanced_skills {
+            if s.type == skill.type {
+                is_advanced = true
+                break
+            }
+        }
+
+        if is_advanced {
+            old_skills := make([dynamic]Skill, len(system.advanced_skills))
+            defer delete(old_skills)
+
+            copy(old_skills[:], system.advanced_skills[:])
+            clear(&system.advanced_skills)
+
+            for s in old_skills {
+                if s.is_unlocked {
+                    append(&system.advanced_skills, s)
+                }
+            }
+
+            for &s in old_skills {
+                if s.type == skill.type {
+                    s.is_unlocked = true
+                    append(&system.advanced_skills, s)
+                }
+            }
+
+            for s in old_skills {
+                if !s.is_unlocked && s.type != skill.type {
+                    append(&system.advanced_skills, s)
+                }
+            }
+
             if system.active_skill == nil {
                 system.active_skill = skill
             }
-            return
-        }
+        } else {
+            old_skills := make([dynamic]Skill, len(system.skills))
+            defer delete(old_skills)
 
-        old_skills := make([dynamic]Skill, len(system.skills))
-        defer delete(old_skills)
+            copy(old_skills[:], system.skills[:])
+            clear(&system.skills)
 
-        copy(old_skills[:], system.skills[:])
-        clear(&system.skills)
-
-        for s in old_skills {
-            if s.is_unlocked {
-                append(&system.skills, s)
+            for s in old_skills {
+                if s.is_unlocked {
+                    append(&system.skills, s)
+                }
             }
-        }
 
-        for &s in old_skills {
-            if s.type == skill.type {
-                s.is_unlocked = true
-                append(&system.skills, s)
+            for &s in old_skills {
+                if s.type == skill.type {
+                    s.is_unlocked = true
+                    append(&system.skills, s)
+                }
             }
-        }
 
-        for s in old_skills {
-            if !s.is_unlocked && s.type != skill.type {
-                append(&system.skills, s)
+            for s in old_skills {
+                if !s.is_unlocked && s.type != skill.type {
+                    append(&system.skills, s)
+                }
             }
-        }
 
-        if system.active_skill == nil {
-            system.active_skill = skill
+            if system.active_skill == nil {
+                system.active_skill = skill
+            }
         }
     }
 }
@@ -3630,8 +3714,8 @@ draw_button :: proc(pos: Vector2, size: Vector2, text: string, color: Vector4, a
 draw_empty_next_skill_panel :: proc() {
     cfg := gs.ui_config.skills.next_skill
 
-    pos :=
-    panel_size := v2{cfg.panel_size_x, cfg.panel_size_y}
+    pos := v2{cfg.empty_panel_pos_x, cfg.empty_panel_pos_y}
+    panel_size := v2{cfg.empty_panel_size_x, cfg.empty_panel_size_y}
     draw_sprite_with_size(
         pos,
         panel_size,
@@ -3641,7 +3725,7 @@ draw_empty_next_skill_panel :: proc() {
         z_layer = .ui
     )
 
-    title_pos := pos + v2{cfg.title_offset_x, cfg.title_offset_y}
+    title_pos := pos + v2{cfg.empty_title_offset_x, cfg.empty_title_offset_y}
     draw_text(
         title_pos,
         "All Skills Unlocked!",
