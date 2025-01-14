@@ -26,8 +26,8 @@
     "next_skill": {
       "offset_x": -400,
       "offset_y": 190,
-      "panel_size_x": 320,
-      "panel_size_y": 100,
+      "panel_size_x": 250,
+      "panel_size_y": 80,
       "title_offset_x": -120,
       "title_offset_y": 45,
       "name_offset_x": -120,

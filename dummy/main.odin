@@ -3216,14 +3216,15 @@ draw_normal_skills_content :: proc(menu_pos: Vector2, alpha: f32){
         }
     }
 
-    if next_skill != nil {
+    if next_skill != nil{
         draw_next_skill_panel(next_skill, next_skill_pos, alpha)
+    }else {
+        draw_empty_next_skill_panel(next_skill_pos)
     }
 
     unlocked_pos := menu_pos + v2{cfg.unlocked_skills.start_offset_x, cfg.unlocked_skills.start_offset_y}
     draw_unlocked_normal_skills(unlocked_pos, alpha)
 }
-
 
 draw_advanced_skills_content :: proc(menu_pos: Vector2, alpha: f32){
     cfg := gs.ui_config.skills
@@ -3319,16 +3320,6 @@ draw_unlocked_normal_skills :: proc(start_pos: Vector2, alpha: f32) {
             v2{rect_width * skill.display_xp, rect_height},
             col = Colors.xp_bar_fill,
             z_layer = cfg.xp_bar.zlayer_xp_2
-        )
-
-        xp_text_pos := bar_pos + v2{bar_width + 10, 0}
-        draw_text(
-            xp_text_pos,
-            fmt.tprintf("%d/%d", skill.current_xp, skill.xp_to_next_level),
-            col = Colors.text * v4{1,1,1,1},
-            scale = 0.8,
-            pivot = .center_left,
-            z_layer = cfg.xp_bar.zlayer_xp
         )
 
         is_active := gs.skills_system.active_skill == &gs.skills_system.skills[i]
@@ -3636,7 +3627,34 @@ draw_button :: proc(pos: Vector2, size: Vector2, text: string, color: Vector4, a
     return hover && key_just_pressed(.LEFT_MOUSE)
 }
 
+draw_empty_next_skill_panel :: proc() {
+    cfg := gs.ui_config.skills.next_skill
+
+    pos :=
+    panel_size := v2{cfg.panel_size_x, cfg.panel_size_y}
+    draw_sprite_with_size(
+        pos,
+        panel_size,
+        .next_skill_panel_bg,
+        pivot = .center_center,
+        color_override = v4{1,1,1,0},
+        z_layer = .ui
+    )
+
+    title_pos := pos + v2{cfg.title_offset_x, cfg.title_offset_y}
+    draw_text(
+        title_pos,
+        "All Skills Unlocked!",
+        col = Colors.text * v4{1,1,1,1},
+        scale = 1.2,
+        pivot = .center_left,
+        z_layer = .ui,
+    )
+}
+
 draw_next_skill_panel :: proc(skill: ^Skill, pos: Vector2, alpha: f32) {
+    cfg := gs.ui_config.skills.next_skill
+
     if skill == nil do return
 
     if skill.is_unlocked {
@@ -3645,7 +3663,6 @@ draw_next_skill_panel :: proc(skill: ^Skill, pos: Vector2, alpha: f32) {
         skill := next_skill
     }
 
-    cfg := gs.ui_config.skills.next_skill
     push_z_layer(.ui)
 
     panel_size := v2{cfg.panel_size_x, cfg.panel_size_y}
