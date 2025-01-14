@@ -135,10 +135,15 @@
       "next_level_offset_x": -380,
       "next_level_offset_y": -10,
       "select_button": {
-        "offset_x": 250,
-        "offset_y": -40,
-        "size_x": 70,
-        "size_y": 25
+        "offset_x": 290,
+        "offset_y": -25,
+        "size_x": 20,
+        "size_y": 7,
+        "text_scale": 1.0,
+        "text_pos_x": 0.0,
+        "text_pos_y": 0.0,
+        "bounds_x": 80.0,
+        "bounds_y": 30.0,
       },
       "xp_bar":{
         "text_pos_x": 0.0,

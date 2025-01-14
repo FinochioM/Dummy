@@ -582,6 +582,7 @@ Image_Id :: enum {
 	tooltip_bg,
     next_skill_panel_bg,
     next_skill_button_bg,
+    next_skill_button_active_bg,
     radio_selected,
     radio_unselected,
     quests_button,
@@ -984,11 +985,13 @@ render :: proc() {
 
         button_pos := v2{cfg.pos_x, cfg.pos_y}
         button_size := v2{cfg.size_x, cfg.size_y}
+        button_bounds := v2{cfg.bounds_x, cfg.bounds_y}
+        hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, button_bounds)
 
         draw_sprite_with_size(
             button_pos,
             button_size,
-            cfg.sprite,
+            img_id = !hover ? Image_Id.next_skill_button_bg : Image_Id.next_skill_button_active_bg,
             pivot = .center_center,
             z_layer = .ui,
         )
@@ -2478,6 +2481,11 @@ Quest_UI_Config :: struct {
             offset_y: f32,
             size_x: f32,
             size_y: f32,
+            text_scale: f32,
+            text_pos_x: f32,
+            text_pos_y: f32,
+            bounds_x: f32,
+            bounds_y: f32,
         },
         xp_bar: struct {
             text_pos_x: f32,
@@ -2648,7 +2656,7 @@ render_quest_entry_configured :: proc(quest: ^Quest, pos: Vector2) {
     reward_pos := pos + v2{cfg.reward_offset_x, cfg.reward_offset_y}
     draw_text(reward_pos, fmt.tprintf("Gold per tick: %d", quest.gold_per_tick[quest.level - 1]), z_layer = .ui)
 
-    if is_active {
+    if is_active { // XP BAR
         sprite_width := cfg.xp_bar.sprite_width
         sprite_height := cfg.xp_bar.sprite_height
         sprite_pos := pos + v2{cfg.xp_bar.sprite_pos_x, cfg.xp_bar.sprite_pos_y}
@@ -2677,18 +2685,33 @@ render_quest_entry_configured :: proc(quest: ^Quest, pos: Vector2) {
             col = Colors.xp_bar_fill,
             z_layer = cfg.xp_bar.bar_layer
         )
-    } else {
+    } else { // SELECT BUTTON
         button_pos := pos + v2{cfg.select_button.offset_x, cfg.select_button.offset_y}
         button_size := v2{cfg.select_button.size_x, cfg.select_button.size_y}
-
-        draw_rect_aabb(button_pos, button_size, col = v4{0.3, 0.5, 0.3, 1}, z_layer = .ui)
-        text_pos := button_pos + v2{10, 5}
-        draw_text(text_pos, "Select", z_layer = .ui)
+        btn_bounds := v2{cfg.select_button.bounds_x, cfg.select_button.bounds_y}
 
         mouse_pos := mouse_pos_in_world_space()
-        button_bounds := aabb_make(button_pos, button_size, Pivot.bottom_left)
+        hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, btn_bounds)
 
-        if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
+        draw_sprite_with_size(
+            button_pos,
+            button_size,
+            img_id = !hover ? Image_Id.next_skill_button_bg : Image_Id.next_skill_button_active_bg,
+            pivot = .center_center,
+            z_layer = .ui,
+        )
+
+        text_pos := button_pos + v2{cfg.select_button.text_pos_x, cfg.select_button.text_pos_y}
+        text_scale := cfg.select_button.text_scale
+        draw_text(
+            text_pos,
+            scale = auto_cast text_scale,
+            text = "Select",
+            pivot = .center_center,
+            z_layer = .ui
+        )
+
+        if hover && key_just_pressed(.LEFT_MOUSE) {
             gs.quests_system.active_quest = quest
             gs.quests_system.timer = QUEST_TICK_TIME
             quest.progress = 0
@@ -3150,11 +3173,12 @@ render_skills_ui :: proc() {
     button_pos := menu_pos + v2{cfg.switch_button.offset_x, cfg.switch_button.offset_y}
     button_size := v2{cfg.switch_button.size_x, cfg.switch_button.size_y}
     btn_bounds := v2{cfg.switch_button.bounds_x, cfg.switch_button.bounds_y}
+    hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, btn_bounds)
 
     draw_sprite_with_size(
         button_pos,
         button_size,
-        cfg.switch_button.sprite,
+        img_id = !hover ? Image_Id.next_skill_button_bg : Image_Id.next_skill_button_active_bg,
         pivot = .center_center,
         z_layer = .ui,
     )
@@ -3167,9 +3191,6 @@ render_skills_ui :: proc() {
         pivot = .center_center,
         z_layer = .ui,
     )
-
-
-    hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, btn_bounds)
 
     if hover && key_just_pressed(.LEFT_MOUSE) {
         gs.skills_system.active_menu = gs.skills_system.active_menu == .normal ? .advanced : .normal
