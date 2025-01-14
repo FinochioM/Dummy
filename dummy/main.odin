@@ -931,6 +931,8 @@ update :: proc() {
 
 	dt := sapp.frame_duration()
 
+    focus_mode_skill_update(f32(dt))
+
 	if key_just_pressed(.F11) {
 		sapp.toggle_fullscreen()
 	}
@@ -1027,6 +1029,7 @@ render :: proc() {
     render_floating_texts()
 
     if gs.skills_system.is_unlocked {
+        focus_mode_skill_render()
         render_skill_menu_button()
 
         if has_unlocked_quests(&gs.quests_system) {
@@ -1065,6 +1068,82 @@ render :: proc() {
     //draw_text(v2{-200, 100}, "Dummy", scale = 2.0, z_layer = .ui)
 
 	gs.ticks += 1
+}
+
+focus_mode_skill_update :: proc(dt: f32) {
+    if gs.skills_system.focus_mode_active {
+        gs.skills_system.focus_mode_timer -= f32(dt)
+        if gs.skills_system.focus_mode_timer <= 0 {
+            gs.skills_system.focus_mode_active = false
+        }
+    }
+
+    if gs.skills_system.focus_mode_button_visible {
+        gs.skills_system.focus_mode_button_timer -= f32(dt)
+        if gs.skills_system.focus_mode_button_timer <= 0 {
+            gs.skills_system.focus_mode_button_visible = false
+        }
+    }
+}
+
+focus_mode_skill_render :: proc() {
+    if gs.skills_system.focus_mode_button_visible {
+        button_pos := v2{0, 100}
+        button_size := v2{120, 40}
+        alpha := min(1.0, gs.skills_system.focus_mode_button_timer)
+
+        glow_size := button_size * 1.2
+        draw_rect_aabb(
+            button_pos,
+            glow_size,
+            col = v4{0.5, 0.3, 0.8, 0.3 * alpha},
+            z_layer = .ui,
+        )
+
+        draw_rect_aabb(
+            button_pos,
+            button_size,
+            col = v4{0.4, 0.2, 0.6, alpha},
+            z_layer = .ui,
+        )
+
+        draw_text(
+            button_pos,
+            "Focus Mode!",
+            col = v4{1, 1, 1, alpha},
+            scale = 1.2,
+            pivot = .center_center,
+            z_layer = .ui,
+        )
+
+        mouse_pos := mouse_pos_in_world_space()
+        if is_point_in_rect(mouse_pos, button_pos, button_size) && key_just_pressed(.LEFT_MOUSE) {
+            gs.skills_system.focus_mode_active = true
+            gs.skills_system.focus_mode_timer = FOCUS_MODE_DURATION
+            gs.skills_system.focus_mode_button_visible = false
+
+            add_floating_text_params(
+                button_pos + v2{0, 30},
+                "Focus Mode Activated!",
+                v4{0.5, 0.3, 0.8, 1.0},
+                scale = 0.8,
+                target_scale = 1.0,
+                lifetime = 1.0,
+                velocity = v2{0, 75},
+            )
+        }
+    }
+
+    if gs.skills_system.focus_mode_active {
+        indicator_pos := v2{-550, 200}
+        draw_text(
+            indicator_pos,
+            fmt.tprintf("Focus Mode: %.1fs", gs.skills_system.focus_mode_timer),
+            col = v4{0.5, 0.3, 0.8, 1.0},
+            scale = 1.2,
+            z_layer = .ui,
+        )
+    }
 }
 
 draw_player_at_pos :: proc(en: ^Entity, pos: Vector2) {
@@ -1594,6 +1673,7 @@ entity_destroy :: proc(entity: ^Entity) {
 
     if entity.kind == .dummy {
         if .ghost_dummy not_in entity.flags {
+            // Formation mastery check - existing code
             for &skill in gs.skills_system.advanced_skills {
                 if skill.is_unlocked && skill.type == .formation_mastery {
                     ghost_chance := calculate_skill_bonus(&skill)
@@ -1610,6 +1690,17 @@ entity_destroy :: proc(entity: ^Entity) {
                                 lifetime = 1.0,
                                 velocity = v2{0, 75},
                             )
+                        }
+                    }
+                }
+
+                // Battle meditation check - new code
+                if skill.is_unlocked && skill.type == .battle_meditation {
+                    if !gs.skills_system.focus_mode_active && !gs.skills_system.focus_mode_button_visible {
+                        trigger_chance := calculate_skill_bonus(&skill)
+                        if rand.float32() < trigger_chance {
+                            gs.skills_system.focus_mode_button_visible = true
+                            gs.skills_system.focus_mode_button_timer = FOCUS_MODE_BUTTON_DURATION
                         }
                     }
                 }
@@ -2906,6 +2997,10 @@ has_unlocked_quests :: proc(system: ^Quests_System) -> bool {
 
 //
 // :skills
+FOCUS_MODE_DURATION :: 5.0
+FOCUS_MODE_BUTTON_DURATION :: 3.0
+FOCUS_MODE_XP_MULTIPLIER :: 2.0
+
 Skill_Type :: enum {
     nil,
     xp_boost,
@@ -2916,6 +3011,7 @@ Skill_Type :: enum {
     mystic_fletcher,
     warrior_stamina,
     formation_mastery,
+    battle_meditation,
 }
 
 Skill :: struct {
@@ -2943,6 +3039,10 @@ Skills_System :: struct {
     gold: int,
     menu_open: bool,
     active_menu: Skills_Menu_Type,
+    focus_mode_active: bool,
+    focus_mode_timer: f32,
+    focus_mode_button_visible: bool,
+    focus_mode_button_timer: f32,
 }
 
 SKILL_COSTS :: [Skill_Type]int {
@@ -2955,6 +3055,7 @@ SKILL_COSTS :: [Skill_Type]int {
     .mystic_fletcher = 10,
     .warrior_stamina = 10,
     .formation_mastery = 10,
+    .battle_meditation = 10,
 }
 
 Skills_UI_Config :: struct {
@@ -3079,6 +3180,7 @@ init_skills_system :: proc() -> Skills_System {
 
     advanced_skill_data := []struct{type: Skill_Type, name, desc: string} {
         {.formation_mastery, "Formation Mastery", "When a dummy dies, gain a 2% chance per level to spawn a ghost dummy that lasts for 5 seconds and grants double XP when killed"},
+        {.battle_meditation, "Battle Meditation", "Gain a 1% chance per level to trigger Focus Mode opportunity, which greatly increases XP gains for a short duration"},
     }
 
     for data in skill_data {
@@ -3130,14 +3232,18 @@ calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
 
     base_bonus: f32
     #partial switch skill.type {
-        case .xp_boost: base_bonus = 0.05
-        case .strength_boost: base_bonus = 0.05
-        case .speed_boost: base_bonus = 0.05
+        // NORMAL
+        case .xp_boost: base_bonus = 0.05 // 0.05
+        case .strength_boost: base_bonus = 0.05 // 0.05
+        case .speed_boost: base_bonus = 0.05 // 0.05
         case .critical_boost: base_bonus = 0.01 // 0.01
-        case .storm_arrows: base_bonus = 0.05
-        case .mystic_fletcher: base_bonus = 0.05
+        case .storm_arrows: base_bonus = 0.05 // 0.05
+        case .mystic_fletcher: base_bonus = 0.05 // 0.05
         case .warrior_stamina: base_bonus = 0.02 // 0.02
-        case .formation_mastery: base_bonus = 1.0
+
+        // ADVANCED
+        case .formation_mastery: base_bonus = 1.0 // 0.02
+        case .battle_meditation: base_bonus = 1.0 // 0.01
         case: return 0.0
     }
 
@@ -3154,6 +3260,11 @@ add_xp_to_active_skill :: proc(system: ^Skills_System, base_xp: int) -> int {
     }
 
     xp_multiplier := calculate_xp_boost(system)
+
+    if system.focus_mode_active {
+        xp_multiplier *= FOCUS_MODE_XP_MULTIPLIER
+    }
+
     total_xp := int(f32(base_xp) * xp_multiplier)
     prev_level := system.active_skill.level
 
@@ -3202,6 +3313,7 @@ get_skill_cost :: proc(type: Skill_Type) -> int {
         case .mystic_fletcher: return 10
         case .warrior_stamina: return 10
         case .formation_mastery: return 10
+        case .battle_meditation: return 10
     }
     return 0
 }
