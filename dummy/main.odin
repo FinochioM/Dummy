@@ -1197,6 +1197,31 @@ draw_dummy_at_pos :: proc(en: ^Entity){
 
         draw_rect_aabb(bar_pos, v2{auto_cast bar_width * health_ratio, auto_cast bar_height * 0.5}, col=v4{0,1,0,1}, z_layer = .ui)
     }
+
+    if en.has_weak_point {
+        en.weak_point_glow_intensity = (sine_breathe(f32(seconds_since_init()) * 2) * 0.5 + 0.5) * 0.8
+
+        weak_point_world_pos := en.pos + en.weak_point_pos
+        glow_size := v2{en.weak_point_radius * 4, en.weak_point_radius * 4}
+        glow_color := v4{1, 0.5, 0, en.weak_point_glow_intensity}
+
+        draw_rect_aabb(
+            weak_point_world_pos - glow_size * 0.5,
+            glow_size,
+            col = glow_color,
+            z_layer = .player
+        )
+
+        center_size := v2{en.weak_point_radius * 2, en.weak_point_radius * 2}
+        center_color := v4{1, 0.8, 0, en.weak_point_glow_intensity + 0.2}
+
+        draw_rect_aabb(
+            weak_point_world_pos - center_size * 0.5,
+            center_size,
+            col = center_color,
+            z_layer = .player
+        )
+    }
 }
 
 draw_arrow_at_pos :: proc(en: ^Entity){
@@ -1372,22 +1397,48 @@ update_arrow :: proc(e: ^Entity, dt: f32) {
 
         target.aabb = aabb_make(target.pos, v2{64, 64}, Pivot.bottom_center)
 
-        is_elemental := false
-
-        if e.arrow_data.arrow_type == .elemental {
-            is_elemental = true
-        }else{
-            is_elemental = false
-        }
+        is_elemental := e.arrow_data.arrow_type == .elemental
 
         if aabb_collide(arrow_path, target.aabb) || aabb_collide(arrow_aabb, target.aabb) {
-            if is_elemental {
-                damage := ELEMENTAL_ARROW_DAMAGE
-                damage_entity(&target, f32(damage), is_elemental = true)
-            } else {
-                damage := ARROW_DAMAGE
-                damage_entity(&target, f32(damage), is_elemental = false)
+            weak_point_hit := false
+            if target.has_weak_point {
+                arrow_center := e.pos
+                weak_point_world_pos := target.pos + target.weak_point_pos
+
+                dist_sq := linalg.length2(arrow_center - weak_point_world_pos)
+                if dist_sq <= target.weak_point_radius * target.weak_point_radius {
+                    weak_point_hit = true
+                }
             }
+
+            if weak_point_hit {
+                if is_elemental {
+                    damage := ELEMENTAL_ARROW_DAMAGE * 2
+                    damage_entity(&target, f32(damage), is_elemental = true)
+                } else {
+                    damage := ARROW_DAMAGE * 2
+                    damage_entity(&target, f32(damage), is_elemental = false)
+                }
+
+                add_floating_text_params(
+                    target.pos + v2{0, 50},
+                    "WEAK POINT!",
+                    v4{1, 0.5, 0, 1},
+                    scale = 1.2,
+                    target_scale = 1.5,
+                    lifetime = 1.0,
+                    velocity = v2{0, 100},
+                )
+            } else {
+                if is_elemental {
+                    damage := ELEMENTAL_ARROW_DAMAGE
+                    damage_entity(&target, f32(damage), is_elemental = true)
+                } else {
+                    damage := ARROW_DAMAGE
+                    damage_entity(&target, f32(damage), is_elemental = false)
+                }
+            }
+
             entity_destroy(e)
             return
         }
@@ -1520,6 +1571,10 @@ Entity :: struct {
 	bow_angle: f32,
 	target_bow_angle: f32,
 	ghost_timer: f32,
+    has_weak_point: bool,
+    weak_point_pos: Vector2,
+    weak_point_radius: f32,
+    weak_point_glow_intensity: f32,
 }
 
 entity_data: [Entity_Kind]Entity
@@ -1782,6 +1837,25 @@ setup_dummy :: proc(e: ^Entity, is_ghost := false){
 
     dummy_size := v2{64, 64}
     e.aabb = aabb_make(e.pos, dummy_size, Pivot.bottom_center)
+
+    e.has_weak_point = false
+    e.weak_point_radius = 5.0
+    e.weak_point_glow_intensity = 0.0
+
+    weak_point_chance := f32(0)
+    for &skill in gs.skills_system.advanced_skills {
+        if skill.is_unlocked && skill.type == .tactical_analysis {
+            weak_point_chance = calculate_skill_bonus(&skill)
+            break
+        }
+    }
+
+    if rand.float32() < weak_point_chance {
+        e.has_weak_point = true
+        offset_x := rand.float32_range(-20, 20)
+        offset_y := rand.float32_range(0, 60)
+        e.weak_point_pos = v2{offset_x, offset_y}
+    }
 }
 
 setup_arrow :: proc(e: ^Entity, start_pos: Vector2, target_pos: Vector2, arrow_type := Arrow_Type.normal) {
@@ -3033,6 +3107,7 @@ Skill_Type :: enum {
     formation_mastery,
     battle_meditation,
     war_preparation,
+    tactical_analysis,
 }
 
 Skill :: struct {
@@ -3078,6 +3153,7 @@ SKILL_COSTS :: [Skill_Type]int {
     .formation_mastery = 10,
     .battle_meditation = 10,
     .war_preparation = 10,
+    .tactical_analysis = 10,
 }
 
 Skills_UI_Config :: struct {
@@ -3222,6 +3298,7 @@ init_skills_system :: proc() -> Skills_System {
         {.formation_mastery, "Formation Mastery", "When a dummy dies, gain a 2% chance per level to spawn a ghost dummy that lasts for 5 seconds and grants double XP when killed"},
         {.battle_meditation, "Battle Meditation", "Gain a 1% chance per level to trigger Focus Mode opportunity, which greatly increases XP gains for a short duration"},
         {.war_preparation, "War Preparation", "Increases gold gained from all sources by 2% per level"},
+        {.tactical_analysis, "Tactical Analysis", "Increases chance for dummies to spawn with weak points that deal bonus damage when hit"},
     }
 
     for data in skill_data {
@@ -3286,6 +3363,7 @@ calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
         case .formation_mastery: base_bonus = 0.02 // 0.02
         case .battle_meditation: base_bonus = 0.01 // 0.01
         case .war_preparation: base_bonus = 0.02 // 0.02
+        case .tactical_analysis: base_bonus = 1.0
         case: return 0.0
     }
 
@@ -3357,6 +3435,7 @@ get_skill_cost :: proc(type: Skill_Type) -> int {
         case .formation_mastery: return 10
         case .battle_meditation: return 10
         case .war_preparation: return 10
+        case .tactical_analysis: return 10
     }
     return 0
 }
