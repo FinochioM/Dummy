@@ -305,6 +305,37 @@ is_point_in_rect :: proc(point, pos, size: Vector2) -> bool {
            point.y >= min.y && point.y <= max.y
 }
 
+ray_circle_intersection :: proc(ray_start, ray_end, circle_center: Vector2, circle_radius: f32) -> bool {
+    ray_dir := ray_end - ray_start
+    ray_length := linalg.length(ray_dir)
+
+    if ray_length == 0 {
+        return linalg.length2(ray_start - circle_center) <= circle_radius * circle_radius
+    }
+
+    ray_dir = ray_dir / ray_length
+
+    start_to_center := circle_center - ray_start
+
+    proj_length := linalg.dot(start_to_center, ray_dir)
+
+    if proj_length < 0 || proj_length > ray_length {
+        return false
+    }
+
+    closest_point := ray_start + ray_dir * proj_length
+
+    closest_dist_sq := linalg.length2(closest_point - circle_center)
+    return closest_dist_sq <= circle_radius * circle_radius
+}
+
+circle_collide :: proc(pos1, pos2: Vector2, radius1, radius2: f32) -> bool {
+    diff := pos2 - pos1
+    dist_sq := linalg.length2(diff)
+    combined_radius := radius1 + radius2
+    return dist_sq <= combined_radius * combined_radius
+}
+
 //
 // :RENDER STUFF
 
@@ -1371,7 +1402,6 @@ DUMMY_TARGET_HEIGHT :: 64.0
 
 update_arrow :: proc(e: ^Entity, dt: f32) {
     e.arrow_data.velocity.y -= GRAVITY_EFFECT * dt
-
     old_pos := e.pos
     e.pos += e.arrow_data.velocity * dt
 
@@ -1381,45 +1411,45 @@ update_arrow :: proc(e: ^Entity, dt: f32) {
         return
     }
 
-    arrow_size := v2{20, 2}
-    arrow_aabb := aabb_make(e.pos, arrow_size, Pivot.center_center)
-
-    arrow_path := aabb_make(old_pos, arrow_size, Pivot.center_center)
-    arrow_path.x = min(old_pos.x, e.pos.x) - arrow_size.x * 0.5
-    arrow_path.z = max(old_pos.x, e.pos.x) + arrow_size.x * 0.5
-    arrow_path.y = min(old_pos.y, e.pos.y) - arrow_size.y * 0.5
-    arrow_path.w = max(old_pos.y, e.pos.y) + arrow_size.y * 0.5
+    arrow_radius := f32(10.0)
 
     for &target in gs.entities {
         if .allocated not_in target.flags || target.kind != .dummy {
             continue
         }
 
-        target.aabb = aabb_make(target.pos, v2{64, 64}, Pivot.bottom_center)
+        weak_point_hit := false
+        if target.has_weak_point {
+            weak_point_pos := target.pos + target.weak_point_pos
+            if circle_collide(e.pos, weak_point_pos, arrow_radius, target.weak_point_radius * 4) {
+                weak_point_hit = true
+            }
+        }
 
-        is_elemental := e.arrow_data.arrow_type == .elemental
+        dummy_radius := f32(32.0)
+        dummy_hit := false
+        if !weak_point_hit {
+            dummy_center := target.pos + v2{0, 32}
+            if circle_collide(e.pos, dummy_center, arrow_radius, dummy_radius) {
+                dummy_hit = true
+            }
+        }
 
-        if aabb_collide(arrow_path, target.aabb) || aabb_collide(arrow_aabb, target.aabb) {
-            weak_point_hit := false
-            if target.has_weak_point {
-                arrow_center := e.pos
-                weak_point_world_pos := target.pos + target.weak_point_pos
+        if weak_point_hit || dummy_hit {
+            is_elemental := e.arrow_data.arrow_type == .elemental
+            damage: f32 = 0.0
 
-                dist_sq := linalg.length2(arrow_center - weak_point_world_pos)
-                if dist_sq <= target.weak_point_radius * target.weak_point_radius {
-                    weak_point_hit = true
-                }
+            if is_elemental && weak_point_hit {
+                damage = ELEMENTAL_ARROW_DAMAGE * 2
+            }else if !is_elemental && weak_point_hit {
+                damage = ARROW_DAMAGE * 2
+            }else if is_elemental && !weak_point_hit {
+                damage = ELEMENTAL_ARROW_DAMAGE
+            }else {
+                damage = ARROW_DAMAGE
             }
 
             if weak_point_hit {
-                if is_elemental {
-                    damage := ELEMENTAL_ARROW_DAMAGE * 2
-                    damage_entity(&target, f32(damage), is_elemental = true)
-                } else {
-                    damage := ARROW_DAMAGE * 2
-                    damage_entity(&target, f32(damage), is_elemental = false)
-                }
-
                 add_floating_text_params(
                     target.pos + v2{0, 50},
                     "WEAK POINT!",
@@ -1429,16 +1459,9 @@ update_arrow :: proc(e: ^Entity, dt: f32) {
                     lifetime = 1.0,
                     velocity = v2{0, 100},
                 )
-            } else {
-                if is_elemental {
-                    damage := ELEMENTAL_ARROW_DAMAGE
-                    damage_entity(&target, f32(damage), is_elemental = true)
-                } else {
-                    damage := ARROW_DAMAGE
-                    damage_entity(&target, f32(damage), is_elemental = false)
-                }
             }
 
+            damage_entity(&target, damage, is_elemental)
             entity_destroy(e)
             return
         }
@@ -1739,7 +1762,6 @@ entity_destroy :: proc(entity: ^Entity) {
 
     if entity.kind == .dummy {
         if .ghost_dummy not_in entity.flags {
-            // Formation mastery check - existing code
             for &skill in gs.skills_system.advanced_skills {
                 if skill.is_unlocked && skill.type == .formation_mastery {
                     ghost_chance := calculate_skill_bonus(&skill)
@@ -1760,7 +1782,6 @@ entity_destroy :: proc(entity: ^Entity) {
                     }
                 }
 
-                // Battle meditation check - new code
                 if skill.is_unlocked && skill.type == .battle_meditation {
                     if !gs.skills_system.focus_mode_active && !gs.skills_system.focus_mode_button_visible {
                         trigger_chance := calculate_skill_bonus(&skill)
@@ -1839,7 +1860,7 @@ setup_dummy :: proc(e: ^Entity, is_ghost := false){
     e.aabb = aabb_make(e.pos, dummy_size, Pivot.bottom_center)
 
     e.has_weak_point = false
-    e.weak_point_radius = 5.0
+    e.weak_point_radius = 6.0
     e.weak_point_glow_intensity = 0.0
 
     weak_point_chance := f32(0)
@@ -3363,7 +3384,7 @@ calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
         case .formation_mastery: base_bonus = 0.02 // 0.02
         case .battle_meditation: base_bonus = 0.01 // 0.01
         case .war_preparation: base_bonus = 0.02 // 0.02
-        case .tactical_analysis: base_bonus = 1.0
+        case .tactical_analysis: base_bonus = 0.02 // 0.02
         case: return 0.0
     }
 
@@ -4155,7 +4176,7 @@ calculate_gold_gain :: proc(base_gold: int) -> int {
 
     for &skill in gs.skills_system.advanced_skills {
         if skill.is_unlocked && skill.type == .war_preparation {
-            bonus := calculate_skill_bonus(&skill)  // 2% per level
+            bonus := calculate_skill_bonus(&skill)
             final_gold *= (1.0 + bonus)
             break
         }
