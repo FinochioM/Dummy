@@ -1325,7 +1325,13 @@ update_player :: proc(player: ^Entity, dt: f32) {
 
     if target != nil {
         shoot_pos := v2{-440, -320} + v2{30, 40}
-        dir := target.pos - shoot_pos
+
+        target_pos := target.pos
+        if target.has_weak_point {
+            target_pos += target.weak_point_pos
+        }
+
+        dir := target_pos - shoot_pos
         angle := math.atan2(dir.y, dir.x)
         target_degrees := math.to_degrees(angle)
 
@@ -1505,23 +1511,32 @@ spawn_single_arrow :: proc(player: ^Entity, target: ^Entity, arrow_type: Arrow_T
     if arrow == nil do return
 
     shoot_pos := v2{-440, -320} + v2{10, 25}
-    dummy_center := target.pos + v2{0, 25}
 
-    target_variation := v2{
-        rand.float32_range(-DUMMY_TARGET_WIDTH/2, DUMMY_TARGET_WIDTH/2),
-        rand.float32_range(-DUMMY_TARGET_HEIGHT/2, DUMMY_TARGET_HEIGHT/2),
-    }
-
-    accurate_shot := rand.float32() < HIT_CHANCE
     target_pos: Vector2
-    if accurate_shot {
-        target_pos = dummy_center + target_variation
-    } else {
-        miss_variation := v2{
-            rand.float32_range(-ACCURACY_VARIANCE, ACCURACY_VARIANCE),
-            rand.float32_range(-ACCURACY_VARIANCE, ACCURACY_VARIANCE),
+    if target.has_weak_point {
+        weak_point_pos := target.pos + target.weak_point_pos
+        variation := v2{
+            rand.float32_range(-target.weak_point_radius, target.weak_point_radius),
+            rand.float32_range(-target.weak_point_radius, target.weak_point_radius),
         }
-        target_pos = dummy_center + target_variation + miss_variation
+        target_pos = weak_point_pos + variation
+    } else {
+        dummy_center := target.pos + v2{0, 25}
+        target_variation := v2{
+            rand.float32_range(-DUMMY_TARGET_WIDTH/2, DUMMY_TARGET_WIDTH/2),
+            rand.float32_range(-DUMMY_TARGET_HEIGHT/2, DUMMY_TARGET_HEIGHT/2),
+        }
+
+        accurate_shot := rand.float32() < HIT_CHANCE
+        if accurate_shot {
+            target_pos = dummy_center + target_variation
+        } else {
+            miss_variation := v2{
+                rand.float32_range(-ACCURACY_VARIANCE, ACCURACY_VARIANCE),
+                rand.float32_range(-ACCURACY_VARIANCE, ACCURACY_VARIANCE),
+            }
+            target_pos = dummy_center + target_variation + miss_variation
+        }
     }
 
     direction := target_pos - shoot_pos
@@ -1873,8 +1888,8 @@ setup_dummy :: proc(e: ^Entity, is_ghost := false){
 
     if rand.float32() < weak_point_chance {
         e.has_weak_point = true
-        offset_x := rand.float32_range(-20, 20)
-        offset_y := rand.float32_range(0, 60)
+        offset_x := rand.float32_range(-20, -5)
+        offset_y := rand.float32_range(20, 60)
         e.weak_point_pos = v2{offset_x, offset_y}
     }
 }
@@ -3384,7 +3399,7 @@ calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
         case .formation_mastery: base_bonus = 0.02 // 0.02
         case .battle_meditation: base_bonus = 0.01 // 0.01
         case .war_preparation: base_bonus = 0.02 // 0.02
-        case .tactical_analysis: base_bonus = 0.02 // 0.02
+        case .tactical_analysis: base_bonus = 1.0 // 0.02
         case: return 0.0
     }
 
