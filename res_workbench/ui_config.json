@@ -103,15 +103,15 @@
         "rect_pos_y": -29.3,
       },
     },
-    "tooltsip": {
-      "offset_x": 585,
-      "offset_y": -10,
-      "size_x": 200,
-      "size_y": 120,
+    "tooltip": {
+      "offset_x": 100,
+      "offset_y": 30,
+      "size_x": 256,
+      "size_y": 256,
       "padding_x": 10,
       "padding_y": 10,
       "line_spacing": 20
-    }
+    },
   },
 
 

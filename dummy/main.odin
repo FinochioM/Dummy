@@ -1332,8 +1332,8 @@ Arrow_Data :: struct {
     arrow_type: Arrow_Type,
 }
 
-ARROW_BASE_DAMAGE :: 50.0
-ARROW_DAMAGE :: 50.0 // 20
+ARROW_BASE_DAMAGE :: 100.0
+ARROW_DAMAGE :: 100.0 // 20
 ELEMENTAL_ARROW_DAMAGE :: 40.0
 SHOOT_COOLDOWN :: 1.2
 ARROW_SPEED :: 1700.0
@@ -2467,15 +2467,23 @@ draw_panel :: proc(pos, size: Vector2, color: Vector4, z_layer := ZLayer.ui) {
     )
 }
 
-draw_skill_tooltip :: proc(skill: ^Skill, pos: Vector2) {
+draw_skill_tooltip :: proc(skill: ^Skill) {
    if skill == nil do return
+   cfg := gs.ui_config.skills
+
    push_z_layer(.ui)
 
-   size := v2{200, 120}
+   size := v2{cfg.tooltip.size_x, cfg.tooltip.size_x}
+   pos := v2{cfg.tooltip.offset_x, cfg.tooltip.offset_y}
    padding := v2{10, 10}
-   tooltip_aabb := aabb_make(pos, size, Pivot.center_center)
 
-   draw_rect_aabb_actually(tooltip_aabb, col = Colors.tooltip_bg, z_layer = .ui)
+   draw_sprite_with_size(
+        pos,
+        size,
+        img_id = Image_Id.tooltip_bg,
+        pivot = .center_center,
+        z_layer = .ui,
+   )
 
    text_start := pos - size * 0.5 + padding
    line_height := f32(20)
@@ -2715,14 +2723,15 @@ give_quest_rewards :: proc(quest: ^Quest) {
 
     #partial switch quest.type {
         case .gold_generation:
-            gold_amount := quest.gold_per_tick[quest.level - 1]
-            gs.skills_system.gold += gold_amount
+            base_gold := quest.gold_per_tick[quest.level - 1]
+            final_gold := calculate_gold_gain(base_gold)
+            gs.skills_system.gold += final_gold
 
             cfg := gs.ui_config.gold_display
             gold_pos := v2{cfg.pos_x + cfg.text_offset_x + 100, cfg.pos_y + cfg.text_offset_y}
             add_floating_text_params(
                 gold_pos,
-                fmt.tprintf("+%d Gold", gold_amount),
+                fmt.tprintf("+%d Gold", final_gold),
                 v4{1,0.8,0,1},
                 scale = 0.7,
                 target_scale = 0.8,
@@ -3023,6 +3032,7 @@ Skill_Type :: enum {
     warrior_stamina,
     formation_mastery,
     battle_meditation,
+    war_preparation,
 }
 
 Skill :: struct {
@@ -3067,6 +3077,7 @@ SKILL_COSTS :: [Skill_Type]int {
     .warrior_stamina = 10,
     .formation_mastery = 10,
     .battle_meditation = 10,
+    .war_preparation = 10,
 }
 
 Skills_UI_Config :: struct {
@@ -3181,6 +3192,7 @@ Skills_UI_Config :: struct {
         padding_x: f32,
         padding_y: f32,
         line_spacing: f32,
+        sprite: Image_Id,
     },
 }
 
@@ -3209,6 +3221,7 @@ init_skills_system :: proc() -> Skills_System {
     advanced_skill_data := []struct{type: Skill_Type, name, desc: string} {
         {.formation_mastery, "Formation Mastery", "When a dummy dies, gain a 2% chance per level to spawn a ghost dummy that lasts for 5 seconds and grants double XP when killed"},
         {.battle_meditation, "Battle Meditation", "Gain a 1% chance per level to trigger Focus Mode opportunity, which greatly increases XP gains for a short duration"},
+        {.war_preparation, "War Preparation", "Increases gold gained from all sources by 2% per level"},
     }
 
     for data in skill_data {
@@ -3270,8 +3283,9 @@ calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
         case .warrior_stamina: base_bonus = 0.02 // 0.02
 
         // ADVANCED
-        case .formation_mastery: base_bonus = 0.2 // 0.02
-        case .battle_meditation: base_bonus = 1.0 // 0.01
+        case .formation_mastery: base_bonus = 0.02 // 0.02
+        case .battle_meditation: base_bonus = 0.01 // 0.01
+        case .war_preparation: base_bonus = 0.02 // 0.02
         case: return 0.0
     }
 
@@ -3342,6 +3356,7 @@ get_skill_cost :: proc(type: Skill_Type) -> int {
         case .warrior_stamina: return 10
         case .formation_mastery: return 10
         case .battle_meditation: return 10
+        case .war_preparation: return 10
     }
     return 0
 }
@@ -3568,7 +3583,7 @@ draw_unlocked_normal_skills :: proc(start_pos: Vector2, alpha: f32) {
 
                 tooltip_cfg := gs.ui_config.skills.tooltip
                 tooltip_pos := pos + v2{tooltip_cfg.offset_x, tooltip_cfg.offset_y}
-                draw_skill_tooltip(&gs.skills_system.skills[i], tooltip_pos)
+                draw_skill_tooltip(&gs.skills_system.skills[i])
 
                 if key_just_pressed(.LEFT_MOUSE) {
                     old_active := gs.skills_system.active_skill
@@ -3719,7 +3734,7 @@ draw_unlocked_advanced_skills :: proc(start_pos: Vector2, alpha: f32) {
 
                 tooltip_cfg := gs.ui_config.skills.tooltip
                 tooltip_pos := pos + v2{tooltip_cfg.offset_x, tooltip_cfg.offset_y}
-                draw_skill_tooltip(&gs.skills_system.advanced_skills[i], tooltip_pos)
+                draw_skill_tooltip(&gs.skills_system.advanced_skills[i])
 
                 if key_just_pressed(.LEFT_MOUSE) {
                     old_active := gs.skills_system.active_skill
@@ -4054,6 +4069,20 @@ render_skill_menu_button :: proc() {
         xform = xform_scale(v2{gs.ui.skills_button_scale, gs.ui.skills_button_scale}),
         z_layer = .ui,
     )
+}
+
+calculate_gold_gain :: proc(base_gold: int) -> int {
+    final_gold := f32(base_gold)
+
+    for &skill in gs.skills_system.advanced_skills {
+        if skill.is_unlocked && skill.type == .war_preparation {
+            bonus := calculate_skill_bonus(&skill)  // 2% per level
+            final_gold *= (1.0 + bonus)
+            break
+        }
+    }
+
+    return int(final_gold)
 }
 
 //
