@@ -987,6 +987,8 @@ update :: proc() {
 
 	player := get_player()
 
+	update_passive_skill_xp(f32(dt))
+
     // UPDATE ENTITIES
 	for &en in gs.entities {
         if .allocated in en.flags {
@@ -1013,6 +1015,7 @@ update :: proc() {
 	update_quests_system(&gs.quests_system, f32(dt))
     update_floating_texts(f32(dt))
 	update_ui_state(gs, f32(dt))
+
 
 	gs.ticks += 1
 }
@@ -3130,6 +3133,8 @@ has_unlocked_quests :: proc(system: ^Quests_System) -> bool {
 FOCUS_MODE_DURATION :: 5.0
 FOCUS_MODE_BUTTON_DURATION :: 3.0
 FOCUS_MODE_XP_MULTIPLIER :: 2.0
+PASSIVE_XP_INTERVAL :: 2.5
+PASSIVE_XP_BASE_RATE :: 0.005
 
 Skill_Type :: enum {
     nil,
@@ -3144,6 +3149,7 @@ Skill_Type :: enum {
     battle_meditation,
     war_preparation,
     tactical_analysis,
+    commanders_authority,
 }
 
 Skill :: struct {
@@ -3171,6 +3177,7 @@ Skills_System :: struct {
     gold: int,
     menu_open: bool,
     active_menu: Skills_Menu_Type,
+    passive_xp_timer: f32,
     focus_mode_active: bool,
     focus_mode_timer: f32,
     focus_mode_button_visible: bool,
@@ -3190,6 +3197,7 @@ SKILL_COSTS :: [Skill_Type]int {
     .battle_meditation = 10,
     .war_preparation = 10,
     .tactical_analysis = 10,
+    .commanders_authority = 10,
 }
 
 Skills_UI_Config :: struct {
@@ -3318,6 +3326,7 @@ init_skills_system :: proc() -> Skills_System {
         gold = 100,
         menu_open = false,
         active_menu = .normal,
+        passive_xp_timer = 0,
     }
 
     skill_data := []struct{type: Skill_Type, name, desc: string}{
@@ -3335,6 +3344,7 @@ init_skills_system :: proc() -> Skills_System {
         {.battle_meditation, "Battle Meditation", "Gain a 1% chance per level to trigger Focus Mode opportunity, which greatly increases XP gains for a short duration"},
         {.war_preparation, "War Preparation", "Increases gold gained from all sources by 2% per level"},
         {.tactical_analysis, "Tactical Analysis", "Increases chance for dummies to spawn with weak points that deal bonus damage when hit"},
+        {.commanders_authority, "Commander's Authority", "All unlocked skills gain passive XP over time, increasing by 0.5% per level"},
     }
 
     for data in skill_data {
@@ -3379,6 +3389,121 @@ calculate_xp_boost :: proc(system: ^Skills_System) -> f32 {
     return 1.0
 }
 
+calculate_passive_xp_for_skill :: proc(commander_level: int, xp_to_next: int) -> int {
+    percentage := PASSIVE_XP_BASE_RATE * f32(commander_level)
+    xp_gain := int(f32(xp_to_next) * percentage)
+
+    return max(1, xp_gain)
+}
+
+update_passive_skill_xp :: proc(dt: f32) {
+    if system := &gs.skills_system; system.is_unlocked {
+        system.passive_xp_timer -= dt
+        if system.passive_xp_timer <= 0 {
+            system.passive_xp_timer = PASSIVE_XP_INTERVAL
+
+            commander_level := 0
+            for skill in system.advanced_skills {
+                if skill.is_unlocked && skill.type == .commanders_authority {
+                    commander_level = skill.level
+                    break
+                }
+            }
+
+            if commander_level > 0 {
+                for &skill in system.skills {
+                    if skill.is_unlocked && skill.level < XP.MAX_LEVEL {
+                        passive_xp := calculate_passive_xp_for_skill(commander_level, skill.xp_to_next_level)
+                        if passive_xp > 0 {
+                            prev_level := skill.level
+                            skill.current_xp += passive_xp
+
+                            for skill.current_xp >= skill.xp_to_next_level {
+                                skill.current_xp -= skill.xp_to_next_level
+                                skill.level += 1
+
+                                if skill.level >= XP.MAX_LEVEL {
+                                    skill.level = XP.MAX_LEVEL
+                                    skill.current_xp = 0
+                                    break
+                                }
+
+                                skill.xp_to_next_level = int(f32(skill.xp_to_next_level) * XP.LEVEL_XP_MULTIPLIER)
+                            }
+
+                            if skill.level > prev_level {
+                                check_quest_unlocks(&skill)
+                                add_floating_text_params(
+                                    v2{-200, 150},
+                                    fmt.tprintf("%s reached level %d!", skill.name, skill.level),
+                                    v4{0.5, 0.5, 1, 1},
+                                    scale = 0.8,
+                                    target_scale = 1.0,
+                                    lifetime = 1.0,
+                                    velocity = v2{0, 50},
+                                )
+                            }
+                        }
+                    }
+                }
+
+                for &skill in system.advanced_skills {
+                    if skill.is_unlocked && skill.level < XP.MAX_LEVEL {
+                        passive_xp := calculate_passive_xp_for_skill(commander_level, skill.xp_to_next_level)
+                        if passive_xp > 0 {
+                            prev_level := skill.level
+                            skill.current_xp += passive_xp
+
+                            for skill.current_xp >= skill.xp_to_next_level {
+                                skill.current_xp -= skill.xp_to_next_level
+                                skill.level += 1
+
+                                if skill.level >= XP.MAX_LEVEL {
+                                    skill.level = XP.MAX_LEVEL
+                                    skill.current_xp = 0
+                                    break
+                                }
+
+                                skill.xp_to_next_level = int(f32(skill.xp_to_next_level) * XP.LEVEL_XP_MULTIPLIER)
+                            }
+
+                            if skill.level > prev_level {
+                                check_quest_unlocks(&skill)
+                                add_floating_text_params(
+                                    v2{-200, 150},
+                                    fmt.tprintf("%s reached level %d!", skill.name, skill.level),
+                                    v4{0.5, 0.5, 1, 1},
+                                    scale = 0.8,
+                                    target_scale = 1.0,
+                                    lifetime = 1.0,
+                                    velocity = v2{0, 50},
+                                )
+                            }
+                        }
+                    }
+                }
+
+                total_skills := 0
+                for skill in system.skills do if skill.is_unlocked do total_skills += 1
+                for skill in system.advanced_skills do if skill.is_unlocked do total_skills += 1
+
+                if total_skills > 0 {
+                    example_xp := calculate_passive_xp_for_skill(commander_level, 100) // Using base XP requirement for display
+                    add_floating_text_params(
+                        v2{-200, 100},
+                        fmt.tprintf("Passive XP: +%.1f%% to all skills", PASSIVE_XP_BASE_RATE * f32(commander_level) * 100),
+                        v4{0.5, 0.5, 1, 0.8},
+                        scale = 0.7,
+                        target_scale = 0.8,
+                        lifetime = 0.8,
+                        velocity = v2{0, 40},
+                    )
+                }
+            }
+        }
+    }
+}
+
 calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
     if skill == nil {
         return 0.0
@@ -3399,7 +3524,8 @@ calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
         case .formation_mastery: base_bonus = 0.02 // 0.02
         case .battle_meditation: base_bonus = 0.01 // 0.01
         case .war_preparation: base_bonus = 0.02 // 0.02
-        case .tactical_analysis: base_bonus = 1.0 // 0.02
+        case .tactical_analysis: base_bonus = 0.02 // 0.02
+        case .commanders_authority: base_bonus = PASSIVE_XP_BASE_RATE
         case: return 0.0
     }
 
@@ -3472,6 +3598,7 @@ get_skill_cost :: proc(type: Skill_Type) -> int {
         case .battle_meditation: return 10
         case .war_preparation: return 10
         case .tactical_analysis: return 10
+        case .commanders_authority: return 10
     }
     return 0
 }
