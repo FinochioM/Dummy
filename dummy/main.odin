@@ -1122,9 +1122,30 @@ render :: proc() {
 
 focus_mode_skill_update :: proc(dt: f32) {
     if gs.skills_system.focus_mode_active {
+        base_duration := FOCUS_MODE_DURATION
+
+        extra_duration := f32(0)
+        if gs.quests_system.active_quest != nil && gs.quests_system.active_quest.type == .meditation_training {
+            extra_duration = f32(gs.quests_system.active_quest.level)
+        }
+
+        total_duration := f32(base_duration) + extra_duration
+
         gs.skills_system.focus_mode_timer -= f32(dt)
         if gs.skills_system.focus_mode_timer <= 0 {
             gs.skills_system.focus_mode_active = false
+
+            if extra_duration > 0 {
+                add_floating_text_params(
+                    v2{-550, 250},
+                    fmt.tprintf("Innder Focus ended (+%.0fs duration)", extra_duration),
+                    v4{0.5, 0.3, 0.8, 1.0},
+                    scale = 0.8,
+                    target_scale = 1.0,
+                    lifetime = 1.2,
+                    velocity = v2{0, 75},
+                )
+            }
         }
     }
 
@@ -1178,7 +1199,15 @@ focus_mode_skill_render :: proc() {
         mouse_pos := mouse_pos_in_world_space()
         if is_point_in_rect(mouse_pos, button_pos, button_bounds) && key_just_pressed(.LEFT_MOUSE) {
             gs.skills_system.focus_mode_active = true
-            gs.skills_system.focus_mode_timer = FOCUS_MODE_DURATION
+
+            base_duration := FOCUS_MODE_DURATION
+            extra_duration := f32(0)
+
+            if gs.quests_system.active_quest != nil && gs.quests_system.active_quest.type == .meditation_training {
+                extra_duration = f32(gs.quests_system.active_quest.level)
+            }
+
+            gs.skills_system.focus_mode_timer = f32(base_duration) + extra_duration
             gs.skills_system.focus_mode_button_visible = false
 
             add_floating_text_params(
@@ -2704,6 +2733,7 @@ Quest_Type :: enum {
     gold_generation,
     gold_and_xp,
     formation_training,
+    meditation_training,
 }
 
 Quest :: struct {
@@ -2915,6 +2945,19 @@ init_quests_system :: proc() -> Quests_System {
         gold_per_tick = {12, 24, 48, 96, 192},
     }
 
+    inner_focus_quest := Quest{
+        type = .meditation_training,
+        name = "Inner Focus",
+        description = "Deep meditation rituals to extend your mental focus",
+        level = 1,
+        is_unlocked = false,
+        cooldown = QUEST_TICK_TIME,
+        required_skill = .battle_meditation,
+        required_skill_levels = {2, 4, 6, 8, 10},
+        gold_per_tick = {12, 24, 48, 96, 192},
+    }
+
+    // NORMAL
     append(&system.quests, apprentice_quest)
     append(&system.quests, warrior_quest)
     append(&system.quests, wind_walker_quest)
@@ -2922,7 +2965,10 @@ init_quests_system :: proc() -> Quests_System {
     append(&system.quests, multi_shot_quest)
     append(&system.quests, elemental_archery_quest)
     append(&system.quests, battle_recovery_quest)
+
+    // ADVANCED
     append(&system.quests, strategic_positioning_quest)
+    append(&system.quests, inner_focus_quest)
     return system
 }
 
@@ -3109,6 +3155,22 @@ give_quest_rewards :: proc(quest: ^Quest) {
                     }
                 }
             }
+        case .meditation_training:
+            base_gold := quest.gold_per_tick[quest.level - 1]
+            final_gold := calculate_gold_gain(base_gold)
+            gs.skills_system.gold += final_gold
+
+            cfg := gs.ui_config.gold_display
+            gold_pos := v2{cfg.pos_x + cfg.text_offset_x + 100, cfg.pos_y + cfg.text_offset_y}
+            add_floating_text_params(
+                gold_pos,
+                fmt.tprintf("+%d Gold", final_gold),
+                v4{1, 0.8, 0, 1},
+                scale = 0.7,
+                target_scale = 0.8,
+                lifetime = 1.0,
+                velocity = v2{0, 50},
+            )
     }
 }
 

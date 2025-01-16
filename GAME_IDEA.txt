@@ -98,7 +98,7 @@ Quest: Train squad formations - Gives gold and small chance to instantly level u
 
 Battle Meditation -> "Inner Focus"
 Skill: Gain a 1% chance per level to trigger Focus Mode opportunity, which greatly increases XP gains for a short duration.
-Quest: Deep meditation rituals - Gives gold and temporary boost to all XP gains
+Quest: Deep meditation rituals - Gives gold and extends focus mode duration per level.
 
 
 War Preparation -> "Resource Mastery"
