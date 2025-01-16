@@ -155,8 +155,8 @@
       "name_offset_y": 0,
       "reward_offset_x": 210,
       "reward_offset_y": 0,
-      "next_level_offset_x": -380,
-      "next_level_offset_y": -10,
+      "next_level_offset_x": -120,
+      "next_level_offset_y": 20,
       "select_button": {
         "offset_x": 290,
         "offset_y": -25,

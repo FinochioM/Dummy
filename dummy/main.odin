@@ -2672,8 +2672,14 @@ XP :: XP_CONSTANTS{
 //
 // :quests
 QUEST_TICK_TIME :: 1.5
-QUEST_GOLD_REWARDS :: [5]int{10, 25, 50, 100, 200}
-QUEST_LEVEL_REQUIREMENTS :: [5]int{1, 6, 9, 12, 15}
+
+
+QUEST_GOLD_REWARDS_APPRENTICE :: [5]int{10, 25, 50, 100, 200}
+QUEST_GOLD_REWARDS_WARRIOR :: [5]int{10, 25, 50, 100, 200}
+
+
+QUEST_LEVEL_REQUIREMENTS_APPRENTICE :: [5]int{1, 3, 5, 7, 9}
+QUEST_LEVEL_REQUIREMENTS_WARRIOR :: [5]int{2, 4, 6, 8, 10}
 
 Quest_Type :: enum {
     nil,
@@ -2789,8 +2795,8 @@ init_quests_system :: proc() -> Quests_System {
         is_unlocked = false,
         cooldown = QUEST_TICK_TIME,
         required_skill = .xp_boost,
-        required_skill_levels = QUEST_LEVEL_REQUIREMENTS,
-        gold_per_tick = QUEST_GOLD_REWARDS,
+        required_skill_levels = {1, 3, 5, 7, 9},
+        gold_per_tick = {10, 25, 50, 100, 200},
     }
 
     warrior_quest := Quest{
@@ -2801,8 +2807,8 @@ init_quests_system :: proc() -> Quests_System {
         is_unlocked = false,
         cooldown = QUEST_TICK_TIME,
         required_skill = .strength_boost,
-        required_skill_levels = QUEST_LEVEL_REQUIREMENTS,
-        gold_per_tick = QUEST_GOLD_REWARDS,
+        required_skill_levels = {2, 4, 6, 8, 10},
+        gold_per_tick = {15, 35, 70, 140, 280},
     }
 
     append(&system.quests, apprentice_quest)
@@ -2855,14 +2861,34 @@ give_quest_rewards :: proc(quest: ^Quest) {
 }
 
 check_quest_unlocks :: proc(skill: ^Skill) {
-    if skill == nil {
-        return
-    }
+    if skill == nil do return
 
     for &quest in gs.quests_system.quests {
         if !quest.is_unlocked && quest.required_skill == skill.type {
             if skill.level >= quest.required_skill_levels[0] {
                 quest.is_unlocked = true
+            }
+        }
+
+        if quest.is_unlocked && quest.required_skill == skill.type {
+            for level := len(quest.required_skill_levels)-1; level >= 0; level -= 1 {
+                if skill.level >= quest.required_skill_levels[level] {
+                    if quest.level < level + 1 {
+                        old_level := quest.level
+                        quest.level = level + 1
+
+                        add_floating_text_params(
+                            v2{-200, 150},
+                            fmt.tprintf("%s advanced to level %d!", quest.name, quest.level),
+                            v4{1, 0.8, 0, 1},
+                            scale = 0.8,
+                            target_scale = 1.0,
+                            lifetime = 1.0,
+                            velocity = v2{0, 50},
+                        )
+                    }
+                    break
+                }
             }
         }
     }
@@ -2909,6 +2935,7 @@ render_quests_ui :: proc() {
     }
 }
 
+
 render_quest_entry_configured :: proc(quest: ^Quest, pos: Vector2) {
     cfg := gs.ui_config.quests.quest_entry
     is_active := gs.quests_system.active_quest == quest
@@ -2921,7 +2948,22 @@ render_quest_entry_configured :: proc(quest: ^Quest, pos: Vector2) {
     draw_text(name_pos, fmt.tprintf("%s (Level %d)", quest.name, quest.level), z_layer = .ui)
 
     reward_pos := pos + v2{cfg.reward_offset_x, cfg.reward_offset_y}
-    draw_text(reward_pos, fmt.tprintf("Gold per tick: %d", quest.gold_per_tick[quest.level - 1]), z_layer = .ui)
+    current_gold := quest.gold_per_tick[quest.level-1]
+
+    if quest.level < len(quest.gold_per_tick) {
+        next_level_pos := pos + v2{cfg.next_level_offset_x, cfg.next_level_offset_y}
+        required_skill_level := quest.required_skill_levels[quest.level]
+        draw_text(
+            next_level_pos,
+            fmt.tprintf("Next Level: %d gold (Requires skill level %d)",
+                quest.gold_per_tick[quest.level],
+                required_skill_level),
+            scale = 1.0,
+            z_layer = .ui,
+        )
+    }
+
+    draw_text(reward_pos, fmt.tprintf("Current: %d gold", current_gold), z_layer = .ui)
 
     if is_active { // XP BAR
         sprite_width := cfg.xp_bar.sprite_width
