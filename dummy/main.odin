@@ -2770,6 +2770,7 @@ Quest_Type :: enum {
     meditation_training,
     war_treasury,
     tactical_assessment,
+    strategic_command,
 }
 
 Quest :: struct {
@@ -2789,6 +2790,9 @@ Quest :: struct {
     tactical_mode_active: bool,
     tactical_mode_timer: f32,
     tactical_mode_combo: int,
+    command_rotation_index: int,
+    command_timer: f32,
+    command_active: bool,
 }
 
 Quests_System :: struct {
@@ -2796,6 +2800,7 @@ Quests_System :: struct {
     active_quest: ^Quest,
     timer: f32,
     menu_open: bool,
+    rotation_pairs: [][2]Quest_Type,
 }
 
 Quest_UI_Config :: struct {
@@ -3023,6 +3028,22 @@ init_quests_system :: proc() -> Quests_System {
         tactical_mode_combo = 0,
     }
 
+    strategic_command_quest := Quest{
+        type = .strategic_command,
+        name = "Strategic Command",
+        description = "Coordinate multiple training operations simultaneously",
+        level = 1,
+        is_unlocked = false,
+        cooldown = QUEST_TICK_TIME,
+        required_skill = .commanders_authority,
+        required_skill_levels = {2, 4, 6, 8, 10},
+        gold_per_tick = {12, 24, 48, 96, 192},
+        command_rotation_index = 0,
+        command_timer = 0,
+        command_active = false,
+    }
+
+
     // NORMAL
     append(&system.quests, apprentice_quest)
     append(&system.quests, warrior_quest)
@@ -3037,6 +3058,16 @@ init_quests_system :: proc() -> Quests_System {
     append(&system.quests, inner_focus_quest)
     append(&system.quests, war_treasury_quest)
     append(&system.quests, tactical_assessment_quest)
+    append(&system.quests, strategic_command_quest)
+
+    system.rotation_pairs = make([][2]Quest_Type, 6)
+    system.rotation_pairs[0] = {.gold_generation, .gold_and_xp}
+    system.rotation_pairs[1] = {.meditation_training, .formation_training}
+    system.rotation_pairs[2] = {.war_treasury, .tactical_assessment}
+    system.rotation_pairs[3] = {.gold_and_xp, .formation_training}
+    system.rotation_pairs[4] = {.gold_generation, .tactical_assessment}
+    system.rotation_pairs[5] = {.war_treasury, .meditation_training}
+
     return system
 }
 
@@ -3062,6 +3093,26 @@ update_quests_system :: proc(system: ^Quests_System, dt: f32) {
                 v2{-200, 150},
                 "Tactical Assessment Ended",
                 v4{0.8, 0.3, 0.3, 0.7},
+                scale = 0.8,
+                target_scale = 1.0,
+                lifetime = 1.0,
+                velocity = v2{0, 75},
+            )
+        }
+    }
+
+    if system.active_quest != nil &&
+       system.active_quest.type == .strategic_command &&
+       system.active_quest.command_active {
+
+        system.active_quest.command_timer -= dt
+        if system.active_quest.command_timer <= 0 {
+            system.active_quest.command_active = false
+
+            add_floating_text_params(
+                v2{-200, 150},
+                "Command Order Ended",
+                v4{0.4, 0.4, 0.8, 0.7},
                 scale = 0.8,
                 target_scale = 1.0,
                 lifetime = 1.0,
@@ -3324,6 +3375,79 @@ give_quest_rewards :: proc(quest: ^Quest) {
                     velocity = v2{0, 75},
                 )
             }
+        case .strategic_command:
+            base_gold := quest.gold_per_tick[quest.level - 1]
+            final_gold := calculate_gold_gain(base_gold)
+            gs.skills_system.gold += final_gold
+
+            cfg := gs.ui_config.gold_display
+            gold_pos := v2{cfg.pos_x + cfg.text_offset_x + 100, cfg.pos_y + cfg.text_offset_y}
+            add_floating_text_params(
+                gold_pos,
+                fmt.tprintf("+%d Gold", final_gold),
+                v4{1,0.8,0,1},
+                scale = 0.7,
+                target_scale = 0.8,
+                lifetime = 1.0,
+                velocity = v2{0, 50},
+            )
+
+            trigger_chance := 0.15 + 0.05 * f32(quest.level - 1)
+            if rand.float32() < trigger_chance && !quest.command_active {
+                quest1, quest2 := get_next_quest_pair(quest, &gs.quests_system)
+                if quest1 != nil && quest2 != nil {
+                    quest.command_active = true
+                    quest.command_timer = 3.0
+
+                    reward_scale := 0.7
+
+                    old_gold := gs.skills_system.gold
+                    give_quest_rewards(quest1)
+                    gold_diff1 := gs.skills_system.gold - old_gold
+                    gs.skills_system.gold = old_gold + int(f32(gold_diff1) * f32(reward_scale))
+
+                    old_gold = gs.skills_system.gold
+                    give_quest_rewards(quest2)
+                    gold_diff2 := gs.skills_system.gold - old_gold
+                    gs.skills_system.gold = old_gold + int(f32(gold_diff2) * f32(reward_scale))
+
+                    add_floating_text_params(
+                        v2{-200, 150},
+                        fmt.tprintf("Command Order: %s + %s", quest1.name, quest2.name),
+                        v4{0.4, 0.4, 0.8, 1.0},
+                        scale = 0.8,
+                        target_scale = 1.0,
+                        lifetime = 1.5,
+                        velocity = v2{0, 75},
+                    )
+
+                    next_pair := rotation_pairs[quest.command_rotation_index]
+                    add_floating_text_params(
+                        v2{-200, 100},
+                        fmt.tprintf("Next: %s + %s",
+                            get_quest_type_name(next_pair[0]),
+                            get_quest_type_name(next_pair[1])),
+                        v4{0.4, 0.4, 0.8, 0.8},
+                        scale = 0.7,
+                        target_scale = 0.8,
+                        lifetime = 1.0,
+                        velocity = v2{0, 50},
+                    )
+                }
+            }
+
+    }
+}
+
+get_quest_type_name :: proc(type: Quest_Type) -> string {
+    #partial switch type {
+        case .gold_generation: return "Gold Training"
+        case .gold_and_xp: return "Advanced Training"
+        case .formation_training: return "Formation"
+        case .meditation_training: return "Meditation"
+        case .war_treasury: return "Treasury"
+        case .tactical_assessment: return "Tactical"
+        case: return "Unknown"
     }
 }
 
@@ -3636,6 +3760,33 @@ has_unlocked_quests :: proc(system: ^Quests_System) -> bool {
 
     return false
 }
+
+rotation_pairs := [][2]Quest_Type{
+    {.gold_generation, .gold_and_xp},
+    {.meditation_training, .formation_training},
+    {.war_treasury, .tactical_assessment},
+    {.gold_and_xp, .formation_training},
+    {.gold_generation, .tactical_assessment},
+    {.war_treasury, .meditation_training},
+}
+
+get_next_quest_pair :: proc(quest: ^Quest, system: ^Quests_System) -> (^Quest, ^Quest) {
+    current_pair := rotation_pairs[quest.command_rotation_index]
+    quest.command_rotation_index = (quest.command_rotation_index + 1) % len(rotation_pairs)
+
+    quest1, quest2: ^Quest
+    for &q in system.quests {
+        if q.is_unlocked && q.type == current_pair[0] {
+            quest1 = &q
+        }
+        if q.is_unlocked && q.type == current_pair[1] {
+            quest2 = &q
+        }
+    }
+
+    return quest1, quest2
+}
+
 
 //
 // :skills
