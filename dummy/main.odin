@@ -1275,22 +1275,26 @@ draw_dummy_at_pos :: proc(en: ^Entity){
         draw_rect_aabb(bar_pos, v2{auto_cast bar_width * health_ratio, auto_cast bar_height * 0.5}, col=v4{0,1,0,1}, z_layer = .ui)
     }
 
-    if en.has_weak_point {
-        en.weak_point_glow_intensity = (sine_breathe(f32(seconds_since_init()) * 2) * 0.5 + 0.5) * 0.8
+     if en.has_weak_point {
+        is_tactical := gs.quests_system.active_quest != nil &&
+                      gs.quests_system.active_quest.type == .tactical_assessment &&
+                      gs.quests_system.active_quest.tactical_mode_active
 
         weak_point_world_pos := en.pos + en.weak_point_pos
-        glow_size := v2{en.weak_point_radius * 4, en.weak_point_radius * 4}
-        glow_color := v4{1, 0.5, 0, en.weak_point_glow_intensity}
+        base_glow_size := en.weak_point_radius * 4
+        glow_size := is_tactical ? base_glow_size * 1.5 : base_glow_size
+
+        glow_color := is_tactical ? v4{1, 0.4, 0.4, en.weak_point_glow_intensity * 1.5} : v4{1, 0.6, 0, en.weak_point_glow_intensity}
 
         draw_rect_aabb(
-            weak_point_world_pos - glow_size * 0.5,
-            glow_size,
+            weak_point_world_pos - v2{glow_size, glow_size} * 0.5,
+            v2{glow_size, glow_size},
             col = glow_color,
             z_layer = .player
         )
 
         center_size := v2{en.weak_point_radius * 2, en.weak_point_radius * 2}
-        center_color := v4{1, 0.8, 0, en.weak_point_glow_intensity + 0.2}
+        center_color := is_tactical ? v4{1, 0.6, 0.6, en.weak_point_glow_intensity + 0.4} : v4{1, 1.0, 0, en.weak_point_glow_intensity + 0.2}
 
         draw_rect_aabb(
             weak_point_world_pos - center_size * 0.5,
@@ -1720,6 +1724,36 @@ damage_entity :: proc(e: ^Entity, base_damage: f32, is_elemental := false) {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    if e.kind == .dummy && e.has_weak_point {
+        hit_pos := e.pos + e.weak_point_pos
+        arrow_to_weak_point := hit_pos - e.pos
+        if linalg.length(arrow_to_weak_point) <= e.weak_point_radius {
+            if gs.quests_system.active_quest != nil &&
+               gs.quests_system.active_quest.type == .tactical_assessment &&
+               gs.quests_system.active_quest.tactical_mode_active {
+
+                quest := gs.quests_system.active_quest
+                combo_bonus := f32(quest.tactical_mode_combo) * 0.5
+                bonus_gold := int(f32(damage) * (1.0 + combo_bonus))
+                gs.skills_system.gold += bonus_gold
+
+                quest.tactical_mode_combo += 1
+
+                combo_text := fmt.tprintf("Tactical Hit x%d! +%d Gold",
+                    quest.tactical_mode_combo, bonus_gold)
+                add_floating_text_params(
+                    e.pos + v2{0, 70},
+                    combo_text,
+                    v4{1, 0.3, 0.3, 1.0},
+                    scale = 0.8,
+                    target_scale = 1.0,
+                    lifetime = 1.0,
+                    velocity = v2{0, 75},
+                )
             }
         }
     }
@@ -2734,6 +2768,8 @@ Quest_Type :: enum {
     gold_and_xp,
     formation_training,
     meditation_training,
+    war_treasury,
+    tactical_assessment,
 }
 
 Quest :: struct {
@@ -2750,6 +2786,9 @@ Quest :: struct {
     display_progress: f32,
     xp_per_tick: f32,
     xp_target_skill: Skill_Type,
+    tactical_mode_active: bool,
+    tactical_mode_timer: f32,
+    tactical_mode_combo: int,
 }
 
 Quests_System :: struct {
@@ -2957,6 +2996,33 @@ init_quests_system :: proc() -> Quests_System {
         gold_per_tick = {12, 24, 48, 96, 192},
     }
 
+    war_treasury_quest := Quest{
+        type = .war_treasury,
+        name = "War Treasury",
+        description = "Master the art of resource management in battle",
+        level = 1,
+        is_unlocked = false,
+        cooldown = QUEST_TICK_TIME,
+        required_skill = .war_preparation,
+        required_skill_levels = {2, 4, 6, 8, 10},
+        gold_per_tick = {12, 24, 48, 96, 192},
+    }
+
+    tactical_assessment_quest := Quest{
+        type = .tactical_assessment,
+        name = "Tactical Assessment",
+        description = "Study enemy vulnerabilities to enhance combat effectiveness",
+        level = 1,
+        is_unlocked = false,
+        cooldown = QUEST_TICK_TIME,
+        required_skill = .tactical_analysis,
+        required_skill_levels = {2, 4, 6, 8, 10},
+        gold_per_tick = {12, 24, 48, 96, 192},
+        tactical_mode_active = false,
+        tactical_mode_timer = 0,
+        tactical_mode_combo = 0,
+    }
+
     // NORMAL
     append(&system.quests, apprentice_quest)
     append(&system.quests, warrior_quest)
@@ -2969,6 +3035,8 @@ init_quests_system :: proc() -> Quests_System {
     // ADVANCED
     append(&system.quests, strategic_positioning_quest)
     append(&system.quests, inner_focus_quest)
+    append(&system.quests, war_treasury_quest)
+    append(&system.quests, tactical_assessment_quest)
     return system
 }
 
@@ -2982,6 +3050,24 @@ update_quests_system :: proc(system: ^Quests_System, dt: f32) {
         system.active_quest.progress = 0
     } else {
         system.active_quest.progress = 1 - (system.timer / QUEST_TICK_TIME)
+    }
+
+    if system.active_quest.type == .tactical_assessment && system.active_quest.tactical_mode_active {
+        system.active_quest.tactical_mode_timer -= dt
+        if system.active_quest.tactical_mode_timer <= 0 {
+            system.active_quest.tactical_mode_active = false
+            system.active_quest.tactical_mode_combo = 0
+
+            add_floating_text_params(
+                v2{-200, 150},
+                "Tactical Assessment Ended",
+                v4{0.8, 0.3, 0.3, 0.7},
+                scale = 0.8,
+                target_scale = 1.0,
+                lifetime = 1.0,
+                velocity = v2{0, 75},
+            )
+        }
     }
 
     if system.active_quest != nil {
@@ -3171,6 +3257,73 @@ give_quest_rewards :: proc(quest: ^Quest) {
                 lifetime = 1.0,
                 velocity = v2{0, 50},
             )
+        case .war_treasury:
+            base_gold := quest.gold_per_tick[quest.level - 1]
+            final_gold := calculate_gold_gain(base_gold)
+            gs.skills_system.gold += final_gold
+
+            cfg := gs.ui_config.gold_display
+            gold_pos := v2{cfg.pos_x + cfg.text_offset_x + 100, cfg.pos_y + cfg.text_offset_y}
+            add_floating_text_params(
+                gold_pos,
+                fmt.tprintf("+%d Gold", final_gold),
+                v4{1, 0.8, 0, 1},
+                scale = 0.7,
+                target_scale = 0.8,
+                lifetime = 1.0,
+                velocity = v2{0, 50},
+            )
+
+            trigger_chance := 0.05 + 0.05 * f32(quest.level - 1)
+            if rand.float32() < trigger_chance {
+                bonus_multiplier := 0.5 + 0.1 * f32(quest.level - 1)
+                bonus_gold := int(f32(final_gold) * bonus_multiplier)
+                gs.skills_system.gold += bonus_gold
+
+                bonus_pos := gold_pos + v2{0, 10}
+                add_floating_text_params(
+                    bonus_pos,
+                    fmt.tprintf("Treasury Insight: +%d Gold!", bonus_gold),
+                    v4{1, 0.9, 0.2, 1},
+                    scale = 1.0,
+                    target_scale = 1.3,
+                    lifetime = 1.5,
+                    velocity = v2{0, 75},
+                )
+            }
+        case .tactical_assessment:
+            base_gold := quest.gold_per_tick[quest.level - 1]
+            final_gold := calculate_gold_gain(base_gold)
+            gs.skills_system.gold += final_gold
+
+            cfg := gs.ui_config.gold_display
+            gold_pos := v2{cfg.pos_x + cfg.text_offset_x + 100, cfg.pos_y + cfg.text_offset_y}
+            add_floating_text_params(
+                gold_pos,
+                fmt.tprintf("+%d Gold", final_gold),
+                v4{1, 0.8, 0, 1},
+                scale = 0.7,
+                target_scale = 0.8,
+                lifetime = 1.0,
+                velocity = v2{0, 50},
+            )
+
+            trigger_chance := 0.15 + 0.05 * f32(quest.level - 1)
+            if rand.float32() < trigger_chance && !quest.tactical_mode_active {
+                quest.tactical_mode_active = true
+                quest.tactical_mode_timer = 5.0 + f32(quest.level - 1)
+                quest.tactical_mode_combo = 0
+
+                add_floating_text_params(
+                    v2{-200, 150},
+                    "Tactical Assessment Active!",
+                    v4{0.8, 0.3, 0.3, 1.0},
+                    scale = 0.8,
+                    target_scale = 1.0,
+                    lifetime = 1.0,
+                    velocity = v2{0, 75},
+                )
+            }
     }
 }
 
@@ -3882,7 +4035,7 @@ calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
         case .formation_mastery: base_bonus = 0.02 // 0.02
         case .battle_meditation: base_bonus = 0.01 // 0.01
         case .war_preparation: base_bonus = 0.02 // 0.02
-        case .tactical_analysis: base_bonus = 0.02 // 0.02
+        case .tactical_analysis: base_bonus = 1.0 // 0.02
         case .commanders_authority: base_bonus = PASSIVE_XP_BASE_RATE
         case: return 0.0
     }

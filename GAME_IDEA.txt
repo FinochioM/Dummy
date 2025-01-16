@@ -103,7 +103,7 @@ Quest: Deep meditation rituals - Gives gold and extends focus mode duration per 
 
 War Preparation -> "Resource Mastery"
 Skill: Increases gold gained from all sources by 2% per level
-Quest: Optimize training resources - Gives gold and has a chance to trigger bonus gold drops from dummies
+Quest: Optimize training resources - Gives a big amount of gold with a percentage when it ticks.
 
 
 Tactical Analysis -> "Tactical Insight"
