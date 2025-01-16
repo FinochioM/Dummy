@@ -2702,6 +2702,8 @@ QUEST_LEVEL_REQUIREMENTS_WARRIOR :: [5]int{2, 4, 6, 8, 10}
 Quest_Type :: enum {
     nil,
     gold_generation,
+    gold_and_xp,
+    formation_training,
 }
 
 Quest :: struct {
@@ -2716,6 +2718,8 @@ Quest :: struct {
     gold_per_tick: [5]int,
     progress: f32,
     display_progress: f32,
+    xp_per_tick: f32,
+    xp_target_skill: Skill_Type,
 }
 
 Quests_System :: struct {
@@ -2829,8 +2833,96 @@ init_quests_system :: proc() -> Quests_System {
         gold_per_tick = {15, 35, 70, 140, 280},
     }
 
+    wind_walker_quest := Quest{
+        type = .gold_and_xp,
+        name = "Wind Walker's Grace",
+        description = "Practice quick-draw techniques with master archers",
+        level = 1,
+        is_unlocked = false,
+        cooldown = QUEST_TICK_TIME,
+        required_skill = .speed_boost,
+        required_skill_levels = {2, 4, 6, 8, 10},
+        gold_per_tick = {10, 20, 40, 80, 160},
+        xp_per_tick = 15,
+        xp_target_skill = .xp_boost,
+    }
+
+    hunters_precision_quest := Quest{
+        type = .gold_and_xp,
+        name = "Hunter's Precision",
+        description = "Perfect vital point targeting on moving targets",
+        level = 1,
+        is_unlocked = false,
+        cooldown = QUEST_TICK_TIME,
+        required_skill = .critical_boost,
+        required_skill_levels = {2, 4, 6, 8, 10},
+        gold_per_tick = {12, 24, 48, 96, 192},
+        xp_per_tick = 15,
+        xp_target_skill = .strength_boost,
+    }
+
+    multi_shot_quest := Quest{
+        type = .gold_and_xp,
+        name = "Multi-Shot",
+        description = "Master the art of rapid arrow nocking",
+        level = 1,
+        is_unlocked = false,
+        cooldown = QUEST_TICK_TIME,
+        required_skill = .storm_arrows,
+        required_skill_levels = {2, 4, 6, 8, 10},
+        gold_per_tick = {12, 24, 48, 96, 192},
+        xp_per_tick = 15,
+        xp_target_skill = .speed_boost,
+    }
+
+    elemental_archery_quest := Quest{
+        type = .gold_and_xp,
+        name = "Elemental Archery",
+        description = "Study with the realm's enchanted bowyers",
+        level = 1,
+        is_unlocked = false,
+        cooldown = QUEST_TICK_TIME,
+        required_skill = .mystic_fletcher,
+        required_skill_levels = {2, 4, 6, 8, 10},
+        gold_per_tick = {12, 24, 48, 96, 192},
+        xp_per_tick = 15,
+        xp_target_skill = .storm_arrows,
+    }
+
+    battle_recovery_quest := Quest{
+        type = .gold_and_xp,
+        name = "Battle Recovery",
+        description = "Endurance training with veteran rangers",
+        level = 1,
+        is_unlocked = false,
+        cooldown = QUEST_TICK_TIME,
+        required_skill = .warrior_stamina,
+        required_skill_levels = {2, 4, 6, 8, 10},
+        gold_per_tick = {12, 24, 48, 96, 192},
+        xp_per_tick = 15,
+        xp_target_skill = .mystic_fletcher,
+    }
+
+    strategic_positioning_quest := Quest{
+        type = .formation_training,
+        name = "Strategic Positioning",
+        description = "Train squad formations with a chance to rapidly improve random skills",
+        level = 1,
+        is_unlocked = false,
+        cooldown = QUEST_TICK_TIME,
+        required_skill = .formation_mastery,
+        required_skill_levels = {2, 4, 6, 8, 10},
+        gold_per_tick = {12, 24, 48, 96, 192},
+    }
+
     append(&system.quests, apprentice_quest)
     append(&system.quests, warrior_quest)
+    append(&system.quests, wind_walker_quest)
+    append(&system.quests, hunters_precision_quest)
+    append(&system.quests, multi_shot_quest)
+    append(&system.quests, elemental_archery_quest)
+    append(&system.quests, battle_recovery_quest)
+    append(&system.quests, strategic_positioning_quest)
     return system
 }
 
@@ -2875,6 +2967,148 @@ give_quest_rewards :: proc(quest: ^Quest) {
                 lifetime = 1.0,
                 velocity = v2{0, 50},
             )
+        case .gold_and_xp:
+            base_gold := quest.gold_per_tick[quest.level - 1]
+            final_gold := calculate_gold_gain(base_gold)
+            gs.skills_system.gold += final_gold
+
+            cfg := gs.ui_config.gold_display
+            gold_pos := v2{cfg.pos_x + cfg.text_offset_x + 100, cfg.pos_y + cfg.text_offset_y}
+            add_floating_text_params(
+                gold_pos,
+                fmt.tprintf("+%d Gold", final_gold),
+                v4{1,0.8,0,1},
+                scale = 0.7,
+                target_scale = 0.8,
+                lifetime = 1.0,
+                velocity = v2{0, 50},
+            )
+
+            for &skill in gs.skills_system.skills {
+                if skill.is_unlocked && skill.type == quest.xp_target_skill {
+                    if skill.level < XP.MAX_LEVEL {
+                        prev_level := skill.level
+                        skill.current_xp += int(quest.xp_per_tick)
+
+                        for skill.current_xp >= skill.xp_to_next_level {
+                            skill.current_xp -= skill.xp_to_next_level
+                            skill.level += 1
+
+                            if skill.level >= XP.MAX_LEVEL {
+                                skill.level = XP.MAX_LEVEL
+                                skill.current_xp = 0
+                                break
+                            }
+
+                            skill.xp_to_next_level = int(f32(skill.xp_to_next_level) * XP.LEVEL_XP_MULTIPLIER)
+                        }
+
+                        if skill.level > prev_level {
+                            check_quest_unlocks(&skill)
+                            add_floating_text_params(
+                                v2{-200, 150},
+                                fmt.tprintf("%s reached level %d!", skill.name, skill.level),
+                                v4{0.5, 0.5, 1, 1},
+                                scale = 0.8,
+                                target_scale = 1.0,
+                                lifetime = 1.0,
+                                velocity = v2{0, 50},
+                            )
+                        }
+
+                        xp_pos := gold_pos + v2{0, 30}
+                        add_floating_text_params(
+                            xp_pos,
+                            fmt.tprintf("+%d XP to %s", int(quest.xp_per_tick), skill.name),
+                            v4{0.5, 0.8, 1, 1},
+                            scale = 0.7,
+                            target_scale = 0.8,
+                            lifetime = 1.0,
+                            velocity = v2{0, 50},
+                        )
+                    }
+                    break
+                }
+            }
+        case .formation_training:
+            base_gold := quest.gold_per_tick[quest.level - 1]
+            final_gold := calculate_gold_gain(base_gold)
+            gs.skills_system.gold += final_gold
+
+            cfg := gs.ui_config.gold_display
+            gold_pos := v2{cfg.pos_x + cfg.text_offset_x + 100, cfg.pos_y + cfg.text_offset_y}
+            add_floating_text_params(
+                gold_pos,
+                fmt.tprintf("+%d Gold", final_gold),
+                v4{1,0.8,0,1},
+                scale = 0.7,
+                target_scale = 0.8,
+                lifetime = 1.0,
+                velocity = v2{0, 50},
+            )
+
+            trigger_chance := 0.02 * f32(quest.level)
+
+            if rand.float32() < trigger_chance {
+                unlocked_skills: [dynamic]^Skill
+                defer delete(unlocked_skills)
+
+                for &skill in gs.skills_system.skills {
+                    if skill.is_unlocked && skill.level < XP.MAX_LEVEL {
+                        append(&unlocked_skills, &skill)
+                    }
+                }
+                for &skill in gs.skills_system.advanced_skills {
+                    if skill.is_unlocked && skill.level < XP.MAX_LEVEL {
+                        append(&unlocked_skills, &skill)
+                    }
+                }
+
+                if len(unlocked_skills) > 0 {
+                    random_skill := unlocked_skills[rand.int_max(len(unlocked_skills))]
+
+                    xp_boost := int(f32(random_skill.xp_to_next_level) * 0.25)
+
+                    prev_level := random_skill.level
+                    random_skill.current_xp += xp_boost
+
+                    for random_skill.current_xp >= random_skill.xp_to_next_level {
+                        random_skill.current_xp -= random_skill.xp_to_next_level
+                        random_skill.level += 1
+
+                        if random_skill.level >= XP.MAX_LEVEL {
+                            random_skill.level = XP.MAX_LEVEL
+                            random_skill.current_xp = 0
+                            break
+                        }
+
+                        random_skill.xp_to_next_level = int(f32(random_skill.xp_to_next_level) * XP.LEVEL_XP_MULTIPLIER)
+                    }
+
+                    add_floating_text_params(
+                        v2{-200, 150},
+                        fmt.tprintf("Formation Mastery: +%d XP to %s!", xp_boost, random_skill.name),
+                        v4{0.7, 0.3, 1.0, 1.0},
+                        scale = 0.8,
+                        target_scale = 1.0,
+                        lifetime = 1.0,
+                        velocity = v2{0, 75},
+                    )
+
+                    if random_skill.level > prev_level {
+                        check_quest_unlocks(random_skill)
+                        add_floating_text_params(
+                            v2{-200, 200},
+                            fmt.tprintf("%s reached level %d!", random_skill.name, random_skill.level),
+                            v4{1, 0.5, 1, 1},
+                            scale = 0.8,
+                            target_scale = 1.0,
+                            lifetime = 1.0,
+                            velocity = v2{0, 75},
+                        )
+                    }
+                }
+            }
     }
 }
 
@@ -3157,10 +3391,10 @@ draw_next_quest_panel :: proc(quest: ^Quest, pos: Vector2) {
     )
 
     desc_pos := pos + v2{cfg.desc_offset_x, cfg.desc_offset_y}
-    draw_text(
+    draw_wrapped_text(
         desc_pos,
         first_unlockable.description,
-        col = Colors.text * v4{1,1,1,1},
+        Text_Bounds{width=230, height=100},
         pivot = .center_left,
         z_layer = .ui
     )

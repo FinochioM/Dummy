@@ -143,7 +143,7 @@
         "name_offset_x": -120.0,
         "name_offset_y": 25.0,
         "desc_offset_x": -120.0,
-        "desc_offset_y": 0.0,
+        "desc_offset_y": 15.0,
         "level_req_offset_x": -120.0,
         "level_req_offset_y": -50.0,
     },
@@ -158,7 +158,7 @@
       "reward_offset_x": 210,
       "reward_offset_y": 0,
       "next_level_offset_x": -120,
-      "next_level_offset_y": 20,
+      "next_level_offset_y": -15,
       "select_button": {
         "offset_x": 290,
         "offset_y": -25,
@@ -180,12 +180,12 @@
         "sprite_width": 220.0,
         "sprite_height": 5.0,
         "sprite_pos_x": -120.0,
-        "sprite_pos_y": -20.0,
+        "sprite_pos_y": -30.0,
         "bar_layer": "ui",
         "bar_width": 440.0,
         "bar_height": 6.0,
         "bar_pos_x": -120.0,
-        "bar_pos_y": -18.,
+        "bar_pos_y": -28.0,
       }
     }
   },
