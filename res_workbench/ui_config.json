@@ -104,13 +104,15 @@
       },
     },
     "tooltip": {
-      "offset_x": 100,
-      "offset_y": 30,
-      "size_x": 256,
-      "size_y": 256,
+      "offset_x": 400,
+      "offset_y": 160,
+      "size_x": 128.0,
+      "size_y": 128.0,
       "padding_x": 10,
       "padding_y": 10,
-      "line_spacing": 20
+      "line_spacing": 30,
+      "text_pos_x": 285.0,
+      "text_pos_y": 160.0,
     },
   },
 

@@ -355,6 +355,22 @@ draw_sprite :: proc(pos: Vector2, img_id: Image_Id, pivot:= Pivot.bottom_left, x
 	draw_rect_xform(xform0, size, img_id=img_id, color_override=color_override, z_layer=z_layer)
 }
 
+draw_sprite_1024 :: proc(pos: Vector2, size := v2{0,0} , img_id: Image_Id, pivot:= Pivot.bottom_left, xform := Matrix4(1), color_override:= v4{0,0,0,0}, z_layer := ZLayer.nil) {
+	image := images[img_id]
+	size := size
+
+	RES :: 1024
+	p_scale := f32(RES) / max(f32(image.width), f32(image.height))
+
+	xform0 := Matrix4(1)
+	xform0 *= xform_translate(pos)
+	xform0 *= xform
+	xform0 *= xform_scale(v2{p_scale, p_scale})
+	xform0 *= xform_translate(size * -scale_from_pivot(pivot))
+
+	draw_rect_xform(xform0, size, img_id=img_id, color_override=color_override, z_layer=z_layer)
+}
+
 fit_size_to_square :: proc(target_size: Vector2) -> Vector2{
     max_dim := max(target_size.x, target_size.y)
     return Vector2{max_dim, max_dim}
@@ -1100,8 +1116,6 @@ render :: proc() {
             z_layer = .ui,
         )
     }
-
-    //draw_text(v2{-200, 100}, "Dummy", scale = 2.0, z_layer = .ui)
 
 	gs.ticks += 1
 }
@@ -2586,24 +2600,28 @@ draw_skill_tooltip :: proc(skill: ^Skill) {
 
    push_z_layer(.ui)
 
-   size := v2{cfg.tooltip.size_x, cfg.tooltip.size_x}
+   size := v2{cfg.tooltip.size_x, cfg.tooltip.size_y}
    pos := v2{cfg.tooltip.offset_x, cfg.tooltip.offset_y}
    padding := v2{10, 10}
 
-   draw_sprite_with_size(
+   draw_sprite_1024(
         pos,
         size,
-        img_id = Image_Id.tooltip_bg,
+        Image_Id.tooltip_bg,
         pivot = .center_center,
-        z_layer = .ui,
+        z_layer = .ui
    )
 
-   text_start := pos - size * 0.5 + padding
-   line_height := f32(20)
+   text_start := v2{cfg.tooltip.text_pos_x, cfg.tooltip.text_pos_y}
+   line_height := f32(cfg.tooltip.line_spacing)
 
-   draw_text(text_start + v2{0, 0}, skill.name, scale = 1.2, z_layer = .ui)
-
-   draw_text(text_start + v2{0, line_height}, skill.description, z_layer = .ui)
+   draw_wrapped_text(
+        text_start + v2{0, line_height},
+        skill.description,
+        Text_Bounds{width=230, height=100},
+        scale = 1.0,
+        z_layer = .ui,
+    )
 
    bonus := calculate_skill_bonus(skill) * 100
    draw_text(
@@ -3353,6 +3371,8 @@ Skills_UI_Config :: struct {
         size_y: f32,
         padding_x: f32,
         padding_y: f32,
+        text_pos_x: f32,
+        text_pos_y: f32,
         line_spacing: f32,
         sprite: Image_Id,
     },
@@ -4563,5 +4583,126 @@ render_floating_texts :: proc() {
                 z_layer = .ui,
             )
         }
+    }
+}
+
+// :text handler
+Text_Bounds :: struct {
+    width: f32,
+    height: f32,
+}
+
+get_text_dimensions :: proc(text: string, scale: f32) -> Vector2 {
+    using stbtt
+
+    total_size : v2
+    for char, i in text {
+        advance_x: f32
+        advance_y: f32
+        q: aligned_quad
+        GetBakedQuad(&font.char_data[0], font_bitmap_w, font_bitmap_h, cast(i32)char - 32, &advance_x, &advance_y, &q, false)
+
+        size := v2{ abs(q.x0 - q.x1), abs(q.y0 - q.y1) }
+
+        if i == len(text)-1 {
+            total_size.x += size.x
+        } else {
+            total_size.x += advance_x
+        }
+
+        total_size.y = max(total_size.y, -q.y0)
+    }
+
+    return total_size * scale
+}
+
+wrap_text :: proc(text: string, bounds: Text_Bounds, scale: f32) -> []string {
+    if len(text) == 0 do return nil
+
+    lines := make([dynamic]string)
+    words := strings.split(text, " ")
+    defer delete(words)
+
+    current_line := strings.builder_make()
+    defer strings.builder_destroy(&current_line)
+
+    line_start := true
+
+    for word in words {
+        test_line: string
+        if line_start {
+            test_line = word
+        } else {
+            test_line = fmt.tprintf("%s %s", strings.to_string(current_line), word)
+        }
+
+        dims := get_text_dimensions(test_line, scale)
+
+        if dims.x <= bounds.width {
+            if line_start {
+                strings.write_string(&current_line, word)
+            } else {
+                strings.write_string(&current_line, " ")
+                strings.write_string(&current_line, word)
+            }
+            line_start = false
+        } else {
+            if !line_start {
+                append(&lines, strings.clone(strings.to_string(current_line)))
+                strings.builder_reset(&current_line)
+                strings.write_string(&current_line, word)
+            } else {
+                chars := strings.split(word, "")
+                defer delete(chars)
+
+                current_part := strings.builder_make()
+                defer strings.builder_destroy(&current_part)
+
+                for char in chars {
+                    test_str := fmt.tprintf("%s%s", strings.to_string(current_part), char)
+                    test_dims := get_text_dimensions(test_str, scale)
+
+                    if test_dims.x > bounds.width && strings.builder_len(current_part) > 0 {
+                        append(&lines, strings.clone(strings.to_string(current_part)))
+                        strings.builder_reset(&current_part)
+                    }
+
+                    strings.write_string(&current_part, char)
+                }
+
+                if strings.builder_len(current_part) > 0 {
+                    strings.write_string(&current_line, strings.to_string(current_part))
+                }
+            }
+            line_start = false
+        }
+    }
+
+    if strings.builder_len(current_line) > 0 {
+        append(&lines, strings.clone(strings.to_string(current_line)))
+    }
+
+    return lines[:]
+}
+
+draw_wrapped_text :: proc(pos: Vector2, text: string, bounds: Text_Bounds, col := COLOR_WHITE, scale := f32(1.0), pivot := Pivot.bottom_left, z_layer := ZLayer.nil) {
+    lines := wrap_text(text, bounds, scale)
+    defer delete(lines)
+
+    line_height := get_text_dimensions("M", scale).y * 1.2
+
+    total_height := line_height * f32(len(lines))
+    offset := v2{0, 0}
+
+    #partial switch pivot {
+        case .center_center, .center_left, .center_right:
+            offset.y = total_height * 0.5
+        case .top_left, .top_center, .top_right:
+            offset.y = total_height
+    }
+
+    for i := 0; i < len(lines); i += 1 {
+        line_pos := pos - v2{0, f32(i) * line_height} - offset
+        draw_text(line_pos, lines[i], col = col, scale = auto_cast scale, pivot = pivot, z_layer = z_layer)
     }
 }
