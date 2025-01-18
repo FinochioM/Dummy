@@ -1,4 +1,4 @@
-package main
+    package main
 
 import "base:runtime"
 import "base:intrinsics"
@@ -67,8 +67,8 @@ init :: proc "c" () {
 
 	// :init
 	gs = &app_state.game
-   gs.ui_hot_reload = init_ui_hot_reload()
-   gs.ui_config = gs.ui_hot_reload.config
+    gs.ui_hot_reload = init_ui_hot_reload()
+    gs.ui_config = gs.ui_hot_reload.config
 
     gs.skills_system = init_skills_system()
     gs.quests_system = init_quests_system()
@@ -1444,8 +1444,8 @@ Arrow_Data :: struct {
     arrow_type: Arrow_Type,
 }
 
-ARROW_BASE_DAMAGE :: 100.0
-ARROW_DAMAGE :: 100.0 // 20
+ARROW_BASE_DAMAGE :: 200.0 // 20
+ARROW_DAMAGE :: 200.0 // 20
 ELEMENTAL_ARROW_DAMAGE :: 40.0
 SHOOT_COOLDOWN :: 1.2
 ARROW_SPEED :: 1700.0
@@ -2762,6 +2762,11 @@ QUEST_GOLD_REWARDS_WARRIOR :: [5]int{10, 25, 50, 100, 200}
 QUEST_LEVEL_REQUIREMENTS_APPRENTICE :: [5]int{1, 3, 5, 7, 9}
 QUEST_LEVEL_REQUIREMENTS_WARRIOR :: [5]int{2, 4, 6, 8, 10}
 
+Quest_Menu_Type :: enum {
+    normal,
+    advanced,
+}
+
 Quest_Type :: enum {
     nil,
     gold_generation,
@@ -2801,6 +2806,7 @@ Quests_System :: struct {
     timer: f32,
     menu_open: bool,
     rotation_pairs: [][2]Quest_Type,
+    active_menu: Quest_Menu_Type,
 }
 
 Quest_UI_Config :: struct {
@@ -2831,6 +2837,16 @@ Quest_UI_Config :: struct {
         desc_offset_y: f32,
         level_req_offset_x: f32,
         level_req_offset_y: f32,
+    },
+    switch_button: struct {
+        offset_x: f32,
+        offset_y: f32,
+        size_x: f32,
+        size_y: f32,
+        bounds_x: f32,
+        bounds_y: f32,
+        text_scale: f32,
+        sprite: Image_Id,
     },
     quest_entry: struct {
         start_offset_x: f32,
@@ -2881,6 +2897,8 @@ init_quests_system :: proc() -> Quests_System {
         active_quest = nil,
         timer = 0,
         menu_open = false,
+        active_menu = .normal,
+        rotation_pairs = make([][2]Quest_Type, 6),
     }
 
     apprentice_quest := Quest{
@@ -3502,27 +3520,36 @@ render_quests_ui :: proc() {
         z_layer = .ui,
     )
 
-    next_quest: ^Quest
-    for &quest in gs.quests_system.quests {
-        if !quest.is_unlocked {
-            next_quest = &quest
-            break
-        }
+    button_pos := menu_pos + v2{cfg.switch_button.offset_x, cfg.switch_button.offset_y}
+    button_size := v2{cfg.switch_button.size_x, cfg.switch_button.size_y}
+    btn_bounds := v2{cfg.switch_button.bounds_x, cfg.switch_button.bounds_y}
+    hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, btn_bounds)
+
+    draw_sprite_with_size(
+        button_pos,
+        button_size,
+        img_id = !hover ? Image_Id.next_skill_button_bg : Image_Id.next_skill_button_active_bg,
+        pivot = .center_center,
+        z_layer = .ui,
+    )
+
+    button_text := gs.quests_system.active_menu == .normal ? "Advanced" : "Normal"
+    draw_text(
+        button_pos,
+        button_text,
+        scale = auto_cast cfg.switch_button.text_scale,
+        pivot = .center_center,
+        z_layer = .ui,
+    )
+
+    if hover && key_just_pressed(.LEFT_MOUSE) {
+        gs.quests_system.active_menu = gs.quests_system.active_menu == .normal ? .advanced : .normal
     }
 
-    if next_quest != nil {
-        next_quest_pos := menu_pos + v2{cfg.next_quest.offset_x, cfg.next_quest.offset_y}
-        draw_next_quest_panel(next_quest, next_quest_pos)
-    }
-
-    entry_cfg := cfg.quest_entry
-    quest_y := menu_pos.y + entry_cfg.start_offset_y
-
-    for &quest in gs.quests_system.quests {
-        if quest.is_unlocked {
-            render_quest_entry_configured(&quest, v2{menu_pos.x + entry_cfg.start_offset_x, quest_y})
-            quest_y -= entry_cfg.spacing_y
-        }
+    if gs.quests_system.active_menu == .normal {
+        draw_normal_quests_content(menu_pos)
+    } else {
+        draw_advanced_quests_content(menu_pos)
     }
 }
 
@@ -3618,6 +3645,77 @@ render_quest_entry_configured :: proc(quest: ^Quest, pos: Vector2) {
             quest.display_progress = 0
         }
     }
+}
+
+draw_normal_quests_content :: proc(menu_pos: Vector2) {
+    cfg := gs.ui_config.quests
+
+    next_quest: ^Quest
+    for &quest in gs.quests_system.quests {
+        if !quest.is_unlocked && is_normal_quest(quest.type) {
+            next_quest = &quest
+            break
+        }
+    }
+
+    if next_quest != nil {
+        next_quest_pos := menu_pos + v2{cfg.next_quest.offset_x, cfg.next_quest.offset_y}
+        draw_next_quest_panel(next_quest, next_quest_pos)
+    }
+
+    entry_cfg := cfg.quest_entry
+    quest_y := menu_pos.y + entry_cfg.start_offset_y
+
+    for &quest in gs.quests_system.quests {
+        if quest.is_unlocked && is_normal_quest(quest.type) {
+            render_quest_entry_configured(&quest, v2{menu_pos.x + entry_cfg.start_offset_x, quest_y})
+            quest_y -= entry_cfg.spacing_y
+        }
+    }
+}
+
+draw_advanced_quests_content :: proc(menu_pos: Vector2) {
+    cfg := gs.ui_config.quests
+
+    next_quest: ^Quest
+    for &quest in gs.quests_system.quests {
+        if !quest.is_unlocked && is_advanced_quest(quest.type) {
+            next_quest = &quest
+            break
+        }
+    }
+
+    if next_quest != nil {
+        next_quest_pos := menu_pos + v2{cfg.next_quest.offset_x, cfg.next_quest.offset_y}
+        draw_next_quest_panel(next_quest, next_quest_pos)
+    }
+
+    entry_cfg := cfg.quest_entry
+    quest_y := menu_pos.y + entry_cfg.start_offset_y
+
+    for &quest in gs.quests_system.quests {
+        if quest.is_unlocked && is_advanced_quest(quest.type) {
+            render_quest_entry_configured(&quest, v2{menu_pos.x + entry_cfg.start_offset_x, quest_y})
+            quest_y -= entry_cfg.spacing_y
+        }
+    }
+}
+
+is_normal_quest :: proc(type: Quest_Type) -> bool {
+    #partial switch type {
+        case .gold_generation, .gold_and_xp:
+            return true
+    }
+    return false
+}
+
+is_advanced_quest :: proc(type: Quest_Type) -> bool {
+    #partial switch type {
+        case .formation_training, .meditation_training, .war_treasury,
+             .tactical_assessment, .strategic_command:
+            return true
+    }
+    return false
 }
 
 render_active_quest_ui :: proc(quest: ^Quest) {

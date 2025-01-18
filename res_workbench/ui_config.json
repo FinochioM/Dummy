@@ -147,6 +147,16 @@
         "level_req_offset_x": -120.0,
         "level_req_offset_y": -50.0,
     },
+    "switch_button":{
+        "offset_x": 180.0,
+        "offset_y": -220.0,
+        "size_x": 30.0,
+        "size_y": 8.0,
+        "bounds_x": 120.0,
+        "bounds_y": 32.0,
+        "text_scale": 1.0,
+        "sprite": "next_skill_button_bg",
+    },
     "quest_entry": {
       "start_offset_x": -100,
       "start_offset_y": 200,
