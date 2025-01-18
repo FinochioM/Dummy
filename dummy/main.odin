@@ -483,6 +483,7 @@ ZLayer :: enum u8{
     background,
     player,
     foreground,
+    midground,
     ui,
     xp_bars,
     bow,
@@ -614,6 +615,7 @@ Image_Id :: enum {
 	player,
 	bow,
 	background,
+	midground,
 	foreground,
 	dummy_hit1,
 	dummy_hit2,
@@ -1040,6 +1042,7 @@ render :: proc() {
 	using linalg
 
     draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.background, z_layer = .background)
+    draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.midground, z_layer = .midground)
     draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.foreground, z_layer = .foreground)
 
     if !has_active_dummy() {
@@ -1066,7 +1069,7 @@ render :: proc() {
 		if .allocated in en.flags {
 			#partial switch en.kind {
 				case .player: {
-				    draw_player_at_pos(&en, v2{-440, -320})
+				    draw_player_at_pos(&en, v2{-435, -315})
 				}
 				case .dummy: {
 				    draw_dummy_at_pos(&en)
@@ -1259,9 +1262,9 @@ draw_dummy_at_pos :: proc(en: ^Entity){
     health_percent := en.health / en.max_health
 
     if en.animations.current_animation == "" {
-        draw_sprite(v2{en.pos.x, en.pos.y - 10}, .dummy_hit1, pivot = .bottom_center, xform=xform, z_layer=.player, color_override = color_override)
+        draw_sprite(v2{en.pos.x, en.pos.y - 8}, .dummy_hit1, pivot = .bottom_center, xform=xform, z_layer=.player, color_override = color_override)
     }else{
-        draw_current_animation(&en.animations, v2{en.pos.x, en.pos.y - 10}, pivot = .bottom_center, xform = xform, z_layer = .player, color_override = color_override)
+        draw_current_animation(&en.animations, v2{en.pos.x, en.pos.y - 8}, pivot = .bottom_center, xform = xform, z_layer = .player, color_override = color_override)
     }
 
     if en.health < en.max_health {
