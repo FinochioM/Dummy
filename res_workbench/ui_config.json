@@ -8,7 +8,7 @@
       "background_sprite": "skills_panel_bg",
     },
     "button": {
-      "pos_y": 324,
+      "pos_y": 310,
       "size_x": 8,
       "size_y": 8,
       "sprite": "skills_button"
@@ -127,8 +127,8 @@
       "background_sprite": "skills_panel_bg"
     },
     "button": {
-      "pos_x": 50,
-      "pos_y": 324,
+      "pos_x": 40,
+      "pos_y": 310,
       "size_x": 8,
       "size_y": 8,
       "sprite": "quests_button"
