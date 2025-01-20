@@ -1106,7 +1106,7 @@ render :: proc() {
         sprite_pos := v2{cfg.sprite_pos_x, cfg.sprite_pos_y}
         sprite_size := v2{cfg.sprite_size_x, cfg.sprite_size_y}
 
-        draw_sprite_with_size(
+        draw_nores_sprite_with_size(
             sprite_pos,
             sprite_size,
             cfg.sprite,

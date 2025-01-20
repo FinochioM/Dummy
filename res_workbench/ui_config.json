@@ -202,15 +202,15 @@
 
   "gold_display": {
     "pos_x": -600,
-    "pos_y": 250
+    "pos_y": 252
     "icon_size": 24,
-    "text_offset_x": 30,
+    "text_offset_x": 20,
     "text_offset_y": 60,
-    "text_scale": 1.2,
+    "text_scale": 1.1,
     "sprite_pos_x": -600,
     "sprite_pos_y": 320,
-    "sprite_size_x": 6,
-    "sprite_size_y": 4,
+    "sprite_size_x": 40,
+    "sprite_size_y": 40,
     "sprite": "coin",
     },
 
@@ -219,10 +219,10 @@
   "spawner":{
     "pos_x": 0,
     "pos_y": -200,
-    "size_x": 35,
-    "size_y": 10,
-    "bounds_x": 150,
-    "bounds_y": 40,
+    "size_x": 30,
+    "size_y": 8,
+    "bounds_x": 125,
+    "bounds_y": 35,
     "txt_pos_x": -52,
     "txt_pos_y": -205,
     "sprite": "next_skill_button_bg",
