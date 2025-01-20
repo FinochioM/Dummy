@@ -46,13 +46,14 @@ main :: proc() {
 		window_title = "Dummy",
 		icon = { sokol_default = true },
 		logger = { func = slog.func },
-		win32_console_attach = true,
+		win32_console_attach = false,
 	})
 }
 
 init :: proc "c" () {
 	using linalg, fmt
 	context = runtime.default_context()
+	sapp.toggle_fullscreen()
 
 	init_time = t.now()
 
@@ -627,7 +628,6 @@ Image_Id :: enum {
 	skills_button,
 	skills_panel_bg,
 	skills_panel_bg1,
-	skills_icon_frame,
 	tooltip_bg,
     next_skill_panel_bg,
     next_skill_button_bg,
@@ -639,6 +639,7 @@ Image_Id :: enum {
     skill_xp_bar,
     back_focus,
     front_focus,
+    bar,
 }
 
 Image :: struct {
@@ -984,10 +985,6 @@ update :: proc() {
 
     focus_mode_skill_update(f32(dt))
 
-	if key_just_pressed(.F11) {
-		sapp.toggle_fullscreen()
-	}
-
 	if gs.ticks == 0 {
 	    // CREATE PLAYER
 		en := entity_create()
@@ -1086,6 +1083,12 @@ render :: proc() {
     if gs.skills_system.is_unlocked {
         focus_mode_skill_render()
         render_skill_menu_button()
+        draw_sprite(
+            pos = v2{0,310},
+            img_id = .bar,
+            pivot = .center_center,
+            z_layer = .ui,
+        )
 
         if has_unlocked_quests(&gs.quests_system) {
             render_quest_menu_button()
@@ -1115,6 +1118,7 @@ render :: proc() {
         draw_text(
             text_pos,
             fmt.tprintf("%d Gold", gs.skills_system.gold),
+            col = v4{0,0,0,1},
             scale = auto_cast cfg.text_scale,
             z_layer = .ui,
         )
@@ -1411,7 +1415,16 @@ update_player :: proc(player: ^Entity, dt: f32) {
 
     if target != nil && player.shoot_cooldown <= 0 {
         shoot_arrow(player, target)
-        player.shoot_cooldown = SHOOT_COOLDOWN
+
+        speed_multiplier := f32(1.0)
+        for &skill in gs.skills_system.skills {
+            if skill.is_unlocked && skill.type == .speed_boost {
+                speed_bonus := calculate_skill_bonus(&skill)
+                speed_multiplier = 1.0 / (1.0 + speed_bonus)
+                break
+            }
+        }
+        player.shoot_cooldown = SHOOT_COOLDOWN * speed_multiplier
     }
 }
 
@@ -1447,12 +1460,12 @@ Arrow_Data :: struct {
     arrow_type: Arrow_Type,
 }
 
-ARROW_BASE_DAMAGE :: 200.0 // 20
-ARROW_DAMAGE :: 200.0 // 20
+ARROW_BASE_DAMAGE :: 20.0 // 20
+ARROW_DAMAGE :: 20.0 // 20
 ELEMENTAL_ARROW_DAMAGE :: 40.0
 SHOOT_COOLDOWN :: 1.2
 ARROW_SPEED :: 1700.0
-ARROW_LIFETIME :: 1.2
+ARROW_LIFETIME :: 0.6
 ACCURACY_VARIANCE :: 40.0
 GRAVITY_EFFECT :: 6000.0
 HIT_CHANCE :: 0.90
@@ -1531,10 +1544,6 @@ update_arrow :: proc(e: ^Entity, dt: f32) {
 }
 
 shoot_arrow :: proc(player: ^Entity, target: ^Entity){
-    if player.arrow_count >= player.max_arrows {
-        return
-    }
-
     multi_shot_chance := f32(0)
     mystic_shot_chance := f32(0)
     for &skill in gs.skills_system.skills {
@@ -1849,15 +1858,6 @@ entity_create :: proc() -> ^Entity {
 }
 
 entity_destroy :: proc(entity: ^Entity) {
-    if entity.kind == .arrow {
-        for &en in gs.entities {
-            if en.kind == .player {
-                en.arrow_count -= 1
-                break
-            }
-        }
-    }
-
     if entity.kind == .dummy {
         if .ghost_dummy not_in entity.flags {
             for &skill in gs.skills_system.advanced_skills {
@@ -2612,8 +2612,7 @@ update_ui_state :: proc(gs: ^Game_State, dt: f32) {
     mouse_pos := mouse_pos_in_world_space()
 
     button_pos := get_skill_button_pos()
-    if is_point_in_rect(mouse_pos, button_pos, UI.SKILL_BUTTON_SIZE * gs.ui.skills_button_scale) {
-        animate_to_target_f32(&gs.ui.skills_button_scale, UI.HOVER_SCALE, dt, UI.HOVER_SCALE_SPEED)
+    if is_point_in_rect(mouse_pos, button_pos, UI.SKILL_BUTTON_SIZE) {
         if key_just_pressed(.LEFT_MOUSE) {
             gs.skills_system.menu_open = !gs.skills_system.menu_open
             if gs.skills_system.menu_open {
@@ -2627,8 +2626,7 @@ update_ui_state :: proc(gs: ^Game_State, dt: f32) {
     cfg := gs.ui_config.quests.button
     quest_button_pos := v2{cfg.pos_x, cfg.pos_y}
 
-    if is_point_in_rect(mouse_pos, quest_button_pos, UI.SKILL_BUTTON_SIZE * gs.ui.quest_button_scale) {
-        animate_to_target_f32(&gs.ui.quest_button_scale, UI.HOVER_SCALE, dt, UI.HOVER_SCALE_SPEED)
+    if is_point_in_rect(mouse_pos, quest_button_pos, UI.SKILL_BUTTON_SIZE) {
         if key_just_pressed(.LEFT_MOUSE) {
             gs.quests_system.menu_open = !gs.quests_system.menu_open
             if gs.quests_system.menu_open {
@@ -2756,14 +2754,6 @@ XP :: XP_CONSTANTS{
 //
 // :quests
 QUEST_TICK_TIME :: 1.5
-
-
-QUEST_GOLD_REWARDS_APPRENTICE :: [5]int{10, 25, 50, 100, 200}
-QUEST_GOLD_REWARDS_WARRIOR :: [5]int{10, 25, 50, 100, 200}
-
-
-QUEST_LEVEL_REQUIREMENTS_APPRENTICE :: [5]int{1, 3, 5, 7, 9}
-QUEST_LEVEL_REQUIREMENTS_WARRIOR :: [5]int{2, 4, 6, 8, 10}
 
 Quest_Menu_Type :: enum {
     normal,
@@ -2912,8 +2902,8 @@ init_quests_system :: proc() -> Quests_System {
         is_unlocked = false,
         cooldown = QUEST_TICK_TIME,
         required_skill = .xp_boost,
-        required_skill_levels = {1, 3, 5, 7, 9},
-        gold_per_tick = {10, 25, 50, 100, 200},
+        required_skill_levels = {4, 5, 6, 7, 8},
+        gold_per_tick = {1, 2, 3, 4, 5},
     }
 
     warrior_quest := Quest{
@@ -2924,8 +2914,8 @@ init_quests_system :: proc() -> Quests_System {
         is_unlocked = false,
         cooldown = QUEST_TICK_TIME,
         required_skill = .strength_boost,
-        required_skill_levels = {2, 4, 6, 8, 10},
-        gold_per_tick = {15, 35, 70, 140, 280},
+        required_skill_levels = {6, 7, 8, 9, 10},
+        gold_per_tick = {3, 6, 9, 12, 15},
     }
 
     wind_walker_quest := Quest{
@@ -2936,8 +2926,8 @@ init_quests_system :: proc() -> Quests_System {
         is_unlocked = false,
         cooldown = QUEST_TICK_TIME,
         required_skill = .speed_boost,
-        required_skill_levels = {2, 4, 6, 8, 10},
-        gold_per_tick = {10, 20, 40, 80, 160},
+        required_skill_levels = {10, 12, 14, 16, 18},
+        gold_per_tick = {9, 18, 27, 80, 160},
         xp_per_tick = 15,
         xp_target_skill = .xp_boost,
     }
@@ -2950,8 +2940,8 @@ init_quests_system :: proc() -> Quests_System {
         is_unlocked = false,
         cooldown = QUEST_TICK_TIME,
         required_skill = .critical_boost,
-        required_skill_levels = {2, 4, 6, 8, 10},
-        gold_per_tick = {12, 24, 48, 96, 192},
+        required_skill_levels = {20, 22, 24, 26, 28},
+        gold_per_tick = {20, 40, 60, 80, 100},
         xp_per_tick = 15,
         xp_target_skill = .strength_boost,
     }
@@ -2964,8 +2954,8 @@ init_quests_system :: proc() -> Quests_System {
         is_unlocked = false,
         cooldown = QUEST_TICK_TIME,
         required_skill = .storm_arrows,
-        required_skill_levels = {2, 4, 6, 8, 10},
-        gold_per_tick = {12, 24, 48, 96, 192},
+        required_skill_levels = {40, 44, 48, 52, 56},
+        gold_per_tick = {40, 80, 120, 160, 200},
         xp_per_tick = 15,
         xp_target_skill = .speed_boost,
     }
@@ -2978,8 +2968,8 @@ init_quests_system :: proc() -> Quests_System {
         is_unlocked = false,
         cooldown = QUEST_TICK_TIME,
         required_skill = .mystic_fletcher,
-        required_skill_levels = {2, 4, 6, 8, 10},
-        gold_per_tick = {12, 24, 48, 96, 192},
+        required_skill_levels = {48, 56, 64, 72, 80},
+        gold_per_tick = {80, 160, 240, 320, 400},
         xp_per_tick = 15,
         xp_target_skill = .storm_arrows,
     }
@@ -2992,8 +2982,8 @@ init_quests_system :: proc() -> Quests_System {
         is_unlocked = false,
         cooldown = QUEST_TICK_TIME,
         required_skill = .warrior_stamina,
-        required_skill_levels = {2, 4, 6, 8, 10},
-        gold_per_tick = {12, 24, 48, 96, 192},
+        required_skill_levels = {56, 64, 72, 80, 88},
+        gold_per_tick = {160, 240, 320, 400, 480},
         xp_per_tick = 15,
         xp_target_skill = .mystic_fletcher,
     }
@@ -3006,8 +2996,8 @@ init_quests_system :: proc() -> Quests_System {
         is_unlocked = false,
         cooldown = QUEST_TICK_TIME,
         required_skill = .formation_mastery,
-        required_skill_levels = {2, 4, 6, 8, 10},
-        gold_per_tick = {12, 24, 48, 96, 192},
+        required_skill_levels = {62, 70, 78, 86, 94},
+        gold_per_tick = {200, 300, 400, 500, 600},
     }
 
     inner_focus_quest := Quest{
@@ -3018,8 +3008,8 @@ init_quests_system :: proc() -> Quests_System {
         is_unlocked = false,
         cooldown = QUEST_TICK_TIME,
         required_skill = .battle_meditation,
-        required_skill_levels = {2, 4, 6, 8, 10},
-        gold_per_tick = {12, 24, 48, 96, 192},
+        required_skill_levels = {80, 86, 92, 98, 104},
+        gold_per_tick = {240, 340, 440, 540, 640},
     }
 
     war_treasury_quest := Quest{
@@ -3030,8 +3020,8 @@ init_quests_system :: proc() -> Quests_System {
         is_unlocked = false,
         cooldown = QUEST_TICK_TIME,
         required_skill = .war_preparation,
-        required_skill_levels = {2, 4, 6, 8, 10},
-        gold_per_tick = {12, 24, 48, 96, 192},
+        required_skill_levels = {100, 110, 120, 130, 140},
+        gold_per_tick = {260, 380, 500, 620, 740},
     }
 
     tactical_assessment_quest := Quest{
@@ -3042,8 +3032,8 @@ init_quests_system :: proc() -> Quests_System {
         is_unlocked = false,
         cooldown = QUEST_TICK_TIME,
         required_skill = .tactical_analysis,
-        required_skill_levels = {2, 4, 6, 8, 10},
-        gold_per_tick = {12, 24, 48, 96, 192},
+        required_skill_levels = {110, 120, 130, 140, 150},
+        gold_per_tick = {380, 480, 580, 680, 780},
         tactical_mode_active = false,
         tactical_mode_timer = 0,
         tactical_mode_combo = 0,
@@ -3057,8 +3047,8 @@ init_quests_system :: proc() -> Quests_System {
         is_unlocked = false,
         cooldown = QUEST_TICK_TIME,
         required_skill = .commanders_authority,
-        required_skill_levels = {2, 4, 6, 8, 10},
-        gold_per_tick = {12, 24, 48, 96, 192},
+        required_skill_levels = {120, 140, 160, 180, 200},
+        gold_per_tick = {500, 600, 700, 800, 900},
         command_rotation_index = 0,
         command_timer = 0,
         command_active = false,
@@ -3945,22 +3935,6 @@ Skills_System :: struct {
     focus_mode_button_timer: f32,
 }
 
-SKILL_COSTS :: [Skill_Type]int {
-    .nil = 0,
-    .xp_boost = 0,
-    .strength_boost = 10,
-    .speed_boost = 10,
-    .critical_boost = 10,
-    .storm_arrows = 10,
-    .mystic_fletcher = 10,
-    .warrior_stamina = 10,
-    .formation_mastery = 10,
-    .battle_meditation = 10,
-    .war_preparation = 10,
-    .tactical_analysis = 10,
-    .commanders_authority = 10,
-}
-
 Skills_UI_Config :: struct {
     menu: struct {
         pos_x: f32,
@@ -4086,7 +4060,7 @@ init_skills_system :: proc() -> Skills_System {
         active_skill = nil,
         dummies_killed = 0,
         is_unlocked = false,
-        gold = 100,
+        gold = 0,
         menu_open = false,
         active_menu = .normal,
         passive_xp_timer = 0,
@@ -4351,17 +4325,17 @@ get_skill_cost :: proc(type: Skill_Type) -> int {
     switch type {
         case .nil: return 0
         case .xp_boost: return 0
-        case .strength_boost: return 10
-        case .speed_boost: return 10
-        case .critical_boost: return 10
-        case .storm_arrows: return 10
-        case .mystic_fletcher: return 10
-        case .warrior_stamina: return 10
-        case .formation_mastery: return 10
-        case .battle_meditation: return 10
-        case .war_preparation: return 10
-        case .tactical_analysis: return 10
-        case .commanders_authority: return 10
+        case .strength_boost: return 30
+        case .speed_boost: return 300
+        case .critical_boost: return 1100
+        case .storm_arrows: return 9000
+        case .mystic_fletcher: return 50000
+        case .warrior_stamina: return 75000
+        case .formation_mastery: return 100000
+        case .battle_meditation: return 130000
+        case .war_preparation: return 160000
+        case .tactical_analysis: return 180000
+        case .commanders_authority: return 200000
     }
     return 0
 }
@@ -4843,32 +4817,6 @@ any_skill_unlocked :: proc(system: ^Skills_System) -> bool {
         }
     }
     return false
-}
-
-draw_skill_icon :: proc(skill: ^Skill, pos: Vector2, is_active: bool, alpha: f32) {
-    frame_color := is_active ? Colors.button_hover : Colors.button
-    draw_sprite(pos, .skills_icon_frame, pivot = .center_center, color_override = frame_color * v4{1,1,1,alpha})
-
-    draw_sprite(pos, .skills_button, pivot = .center_center, color_override = v4{1,1,1,alpha})
-
-    if is_active {
-        bar_pos := pos + v2{0, -UI.SKILL_ICON_SIZE.y * 0.6}
-        bar_size := v2{UI.SKILL_ICON_SIZE.x * 0.8, 4}
-        xp_ratio := f32(skill.current_xp) / f32(skill.xp_to_next_level)
-
-        draw_rect_aabb(bar_pos, bar_size, col = Colors.xp_bar_bg * v4{1,1,1,alpha}, z_layer = .ui)
-        draw_rect_aabb(bar_pos, v2{bar_size.x * xp_ratio, bar_size.y}, col = Colors.xp_bar_fill * v4{1,1,1,alpha}, z_layer = .ui)
-    }
-}
-
-draw_button :: proc(pos: Vector2, size: Vector2, text: string, color: Vector4, alpha: f32) -> bool {
-    hover := is_point_in_rect(mouse_pos_in_world_space(), pos, size)
-    button_color := hover ? color * 1.2 : color
-
-    draw_rect_aabb(pos - size * 0.5, size, col = button_color * v4{1,1,1,alpha}, z_layer = .ui)
-    draw_text(pos, text, pivot = Pivot.center_center, z_layer = .ui)
-
-    return hover && key_just_pressed(.LEFT_MOUSE)
 }
 
 draw_empty_next_skill_panel :: proc() {
