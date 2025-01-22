@@ -1516,8 +1516,8 @@ Arrow_Data :: struct {
     arrow_type: Arrow_Type,
 }
 
-ARROW_BASE_DAMAGE :: 200.0 // 20
-ARROW_DAMAGE :: 200.0 // 20
+ARROW_BASE_DAMAGE :: 50.0 // 20
+ARROW_DAMAGE :: 50.0 // 20
 ELEMENTAL_ARROW_DAMAGE :: 40.0
 SHOOT_COOLDOWN :: 1.2
 ARROW_SPEED :: 1700.0
@@ -2001,10 +2001,9 @@ setup_dummy :: proc(e: ^Entity, is_ghost := false) {
     }
 
     animations := create_animation_collection()
-    hit_frames := current_tier.frames
-    hit_anim := create_animation(hit_frames, 0.08, false, "hit")
-    add_animation(&animations, hit_anim)
+    hit_anim := create_animation(current_tier.frames, 0.08, false, "hit")
 
+    add_animation(&animations, hit_anim)
     e.animations = animations
 
     dummy_size := v2{64, 64}
@@ -2330,9 +2329,8 @@ update_animation :: proc(anim: ^Animation, delta_t: f32) -> bool {
     anim.frame_timer += delta_t
     if anim.frame_timer >= anim.frame_duration {
         anim.frame_timer -= anim.frame_duration
-        anim.current_frame += 1
-
-        if anim.current_frame >= len(anim.frames) {
+        next_frame := anim.current_frame + 1
+        if next_frame >= len(anim.frames) {
             if anim.loops {
                 anim.current_frame = 0
             } else {
@@ -2340,6 +2338,8 @@ update_animation :: proc(anim: ^Animation, delta_t: f32) -> bool {
                 anim.state = .Stopped
                 return true
             }
+        } else {
+            anim.current_frame = next_frame
         }
     }
 
@@ -2426,10 +2426,10 @@ play_animation_by_name :: proc(collection: ^Animation_Collection, name: string) 
     }
 }
 
-reset_and_play_animation :: proc(collection: ^Animation_Collection, name: string, speed: f32 = 1.0){
+reset_and_play_animation :: proc(collection: ^Animation_Collection, name: string, speed: f32 = 1.0) {
     if collection == nil do return
 
-    if anim, ok := &collection.animations[name]; ok{
+    if anim, ok := &collection.animations[name]; ok {
         anim.current_frame = 0
         anim.frame_timer = 0
         anim.state = .Playing
@@ -2437,6 +2437,8 @@ reset_and_play_animation :: proc(collection: ^Animation_Collection, name: string
         adjust_animation_to_speed(anim, speed)
 
         collection.current_animation = name
+    } else {
+        fmt.println("Animation not found:", name)
     }
 }
 
@@ -2456,6 +2458,7 @@ draw_current_animation :: proc(collection: ^Animation_Collection, pos: Vector2, 
         return
     }
     if anim, ok := &collection.animations[collection.current_animation]; ok {
+        current_frame := get_current_frame(anim)
         draw_animated_sprite(pos, anim, pivot, xform, color_override, z_layer)
     }
 }
@@ -3966,6 +3969,24 @@ Upgrades_UI_Config :: struct {
         size_y: f32,
         sprite: Image_Id,
     },
+    list: struct {
+        start_x: f32,
+        start_y: f32,
+        item_height: f32,
+        spacing: f32,
+        title_offset_x: f32,
+        button_offset_x: f32,
+        button_width: f32,
+        button_height: f32,
+    },
+}
+
+Upgrade_Entry :: struct {
+    name: string,
+    current_tier: ^int,
+    max_tier: int,
+    tier_costs: []int,
+    unlocked: bool,
 }
 
 render_upgrades_menu_button :: proc() {
@@ -3991,7 +4012,6 @@ render_upgrades_menu :: proc() {
 
     menu_pos := v2{cfg.menu.pos_x, cfg.menu.pos_y}
     menu_size := v2{cfg.menu.size_x, cfg.menu.size_y}
-
     draw_sprite_with_size(
         menu_pos,
         menu_size,
@@ -4000,87 +4020,76 @@ render_upgrades_menu :: proc() {
         z_layer = .ui,
     )
 
-    draw_text(
-        menu_pos + v2{-200, 200},
-        "Dummy Training Grounds",
-        scale = 1.5,
-        z_layer = .ui,
-    )
-
-    spacing := v2{0, -120}
-    start_pos := menu_pos + v2{-180, 120}
-
-    for tier, i in gs.upgrades_system.dummy_tiers {
-        pos := start_pos + spacing * f32(i)
-        render_tier_card(tier, i, pos)
+    upgrades := [dynamic]Upgrade_Entry{
+        {
+            name = "Dummy Training",
+            current_tier = &gs.upgrades_system.current_tier,
+            max_tier = len(gs.upgrades_system.dummy_tiers) - 1,
+            tier_costs = []int{0, 1000, 5000, 25000},
+            unlocked = true,
+        },
+        // ADD MORE UPGRADES; MAYBE EVEN MORE XP?
     }
-}
+    defer delete(upgrades)
 
-render_tier_card :: proc(tier: Dummy_Tier, index: int, pos: Vector2) {
-    card_size := v2{400, 100}
-    is_current := index == gs.upgrades_system.current_tier
+    list_cfg := cfg.list
+    current_y := list_cfg.start_y
 
-    bg_color := is_current ? v4{0.3, 0.3, 0.3, 0.8} : v4{0.2, 0.2, 0.2, 0.8}
-    draw_rect_aabb(pos, card_size, col=bg_color, z_layer=.ui)
+    for upgrade in upgrades {
+        if !upgrade.unlocked do continue
 
-    title_text := index == 0 ? "Basic Training Ground" : fmt.tprintf("Advanced Training Tier %d", index)
-    draw_text(pos + v2{10, 35}, title_text, z_layer=.ui)
-
-    stats_pos := pos + v2{10, 10}
-    draw_text(
-        stats_pos,
-        fmt.tprintf("Health: %.0f | XP Multiplier: %.1fx", tier.health, tier.xp_multiplier),
-        scale = 0.8,
-        z_layer = .ui,
-    )
-
-    if !tier.unlocked && index > 0 {
-        button_pos := pos + v2{300, 0}
-        button_size := v2{80, 30}
-        can_afford := gs.skills_system.gold >= tier.cost
-
-        button_color := can_afford ? v4{0.3, 0.5, 0.3, 1} : v4{0.5, 0.3, 0.3, 1}
-        draw_rect_aabb(button_pos, button_size, col=button_color, z_layer=.ui)
-
+        name_pos := v2{list_cfg.start_x + list_cfg.title_offset_x, current_y}
         draw_text(
-            button_pos + v2{10, 15},
-            fmt.tprintf("%d Gold", tier.cost),
-            scale = 0.8,
+            name_pos,
+            upgrade.name,
+            scale = 1.2,
+            pivot = .center_left,
             z_layer = .ui,
         )
 
-        if can_afford {
-            mouse_pos := mouse_pos_in_world_space()
-            button_bounds := aabb_make(button_pos, button_size, Pivot.bottom_left)
-            if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
-                unlock_dummy_tier(index)
+        current := upgrade.current_tier^
+        next_tier := current + 1
+
+        if next_tier <= upgrade.max_tier {
+            button_pos := v2{
+                list_cfg.start_x + list_cfg.button_offset_x,
+                current_y,
             }
-        }
-    } else if tier.unlocked && !is_current {
-        button_pos := pos + v2{300, 0}
-        button_size := v2{80, 30}
-        draw_rect_aabb(button_pos, button_size, col=v4{0.3, 0.5, 0.3, 1}, z_layer=.ui)
+            button_size := v2{list_cfg.button_width, list_cfg.button_height}
+            can_afford := gs.skills_system.gold >= upgrade.tier_costs[next_tier]
+            hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, button_size)
 
-        draw_text(
-            button_pos + v2{20, 15},
-            "Select",
-            scale = 0.8,
-            z_layer = .ui,
-        )
+            draw_sprite_with_size(
+                button_pos,
+                button_size,
+                img_id = !hover ? .next_skill_button_bg : .next_skill_button_active_bg,
+                pivot = .center_center,
+                color_override = can_afford ? v4{0,0,0,0} : v4{1,0.5,0.5,0},
+                z_layer = .ui,
+            )
 
-        mouse_pos := mouse_pos_in_world_space()
-        button_bounds := aabb_make(button_pos, button_size, Pivot.bottom_left)
-        if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
-            gs.upgrades_system.current_tier = index
+            draw_text(
+                button_pos,
+                fmt.tprintf("%d Gold", upgrade.tier_costs[next_tier]),
+                scale = 0.9,
+                pivot = .center_center,
+                z_layer = .ui,
+            )
+
+            if hover && can_afford && key_just_pressed(.LEFT_MOUSE) {
+                unlock_dummy_tier(next_tier)
+            }
+        } else {
+            draw_text(
+                v2{list_cfg.start_x + list_cfg.button_offset_x, current_y},
+                "Max Level",
+                scale = 0.9,
+                pivot = .center_center,
+                z_layer = .ui,
+            )
         }
-    } else if is_current {
-        draw_text(
-            pos + v2{300, 15},
-            "ACTIVE",
-            scale = 0.8,
-            col = v4{0, 1, 0, 1},
-            z_layer = .ui,
-        )
+
+        current_y -= list_cfg.item_height + list_cfg.spacing
     }
 }
 
@@ -4127,59 +4136,83 @@ init_upgrades_system :: proc() -> Upgrades_System {
         current_tier = 0
     }
 
+    dummy_training_grounds_init(&system)
+
+    return system
+}
+
+dummy_training_grounds_init :: proc(system: ^Upgrades_System) {
+    tier0_frames := make([]Image_Id, 6)
+    tier0_frames[0] = .dummy_hit1
+    tier0_frames[1] = .dummy_hit2
+    tier0_frames[2] = .dummy_hit3
+    tier0_frames[3] = .dummy_hit4
+    tier0_frames[4] = .dummy_hit5
+    tier0_frames[5] = .dummy_hit1
+
     system.dummy_tiers[0] = Dummy_Tier {
         level = 0,
         health = 100,
         xp_multiplier = 1.0,
         cost = 0,
-        frames = []Image_Id{
-            .dummy_hit1, .dummy_hit2, .dummy_hit3,
-            .dummy_hit4, .dummy_hit5, .dummy_hit1,
-        },
+        frames = tier0_frames,
         base_sprite = .dummy_hit1,
         unlocked = true,
     }
+
+    tier1_frames := make([]Image_Id, 6)
+    tier1_frames[0] = .dummy1_hit1
+    tier1_frames[1] = .dummy1_hit2
+    tier1_frames[2] = .dummy1_hit3
+    tier1_frames[3] = .dummy1_hit4
+    tier1_frames[4] = .dummy1_hit5
+    tier1_frames[5] = .dummy1_hit1
 
     system.dummy_tiers[1] = Dummy_Tier{
         level = 1,
         health = 250,
         xp_multiplier = 2.5,
         cost = 1000,
-        frames = []Image_Id{
-            .dummy1_hit1, .dummy1_hit2, .dummy1_hit3,
-            .dummy1_hit4, .dummy1_hit5, .dummy1_hit1,
-        },
+        frames = tier1_frames,
         base_sprite = .dummy_1,
         unlocked = false,
     }
+
+    tier2_frames := make([]Image_Id, 6)
+    tier2_frames[0] = .dummy2_hit1
+    tier2_frames[1] = .dummy2_hit2
+    tier2_frames[2] = .dummy2_hit3
+    tier2_frames[3] = .dummy2_hit4
+    tier2_frames[4] = .dummy2_hit5
+    tier2_frames[5] = .dummy2_hit1
 
     system.dummy_tiers[2] = Dummy_Tier{
         level = 2,
         health = 600,
         xp_multiplier = 6.0,
         cost = 5000,
-        frames = []Image_Id{
-            .dummy2_hit1, .dummy2_hit2, .dummy2_hit3,
-            .dummy2_hit4, .dummy2_hit5, .dummy2_hit1,
-        },
+        frames = tier2_frames,
         base_sprite = .dummy_2,
         unlocked = false,
     }
+
+    tier3_frames := make([]Image_Id, 6)
+    tier3_frames[0] = .dummy3_hit1
+    tier3_frames[1] = .dummy3_hit2
+    tier3_frames[2] = .dummy3_hit3
+    tier3_frames[3] = .dummy3_hit4
+    tier3_frames[4] = .dummy3_hit5
+    tier3_frames[5] = .dummy3_hit1
 
     system.dummy_tiers[3] = Dummy_Tier{
         level = 3,
         health = 1500,
         xp_multiplier = 15.0,
         cost = 25000,
-        frames = []Image_Id{
-            .dummy3_hit1, .dummy3_hit2, .dummy3_hit3,
-            .dummy3_hit4, .dummy3_hit5, .dummy3_hit1,
-        },
+        frames = tier3_frames,
         base_sprite = .dummy_3,
         unlocked = false,
     }
-
-    return system
 }
 
 //
@@ -4363,7 +4396,7 @@ init_skills_system :: proc() -> Skills_System {
         active_skill = nil,
         dummies_killed = 0,
         is_unlocked = false,
-        gold = 1000,
+        gold = 10000,
         menu_open = false,
         active_menu = .normal,
         passive_xp_timer = 0,

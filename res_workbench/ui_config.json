@@ -201,21 +201,31 @@
   },
 
   "upgrades": {
-    "menu": {
-      "pos_x": 0,
-      "pos_y": 30,
-      "size_x": 512,
-      "size_y": 512,
-      "background_sprite": "skills_panel_bg"
+        "menu": {
+            "pos_x": 0,
+            "pos_y": 30,
+            "size_x": 512,
+            "size_y": 512,
+            "background_sprite": "skills_panel_bg"
+        },
+        "button": {
+            "pos_x": -40,
+            "pos_y": 310,
+            "size_x": 8,
+            "size_y": 8,
+            "sprite": "upgrades_button"
+        },
+        "list": {
+            "start_x": -200,
+            "start_y": 200,
+            "item_height": 40,
+            "spacing": 20,
+            "title_offset_x": 10,
+            "button_offset_x": 400,
+            "button_width": 20,
+            "button_height": 5
+        }
     },
-    "button": {
-      "pos_x": -40,
-      "pos_y": 310,
-      "size_x": 8,
-      "size_y": 8,
-      "sprite": "upgrades_button"
-    }
-  },
 
   "gold_display": {
     "pos_x": -600,
