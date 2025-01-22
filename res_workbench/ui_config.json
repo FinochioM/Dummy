@@ -200,6 +200,23 @@
     }
   },
 
+  "upgrades": {
+    "menu": {
+      "pos_x": 0,
+      "pos_y": 30,
+      "size_x": 512,
+      "size_y": 512,
+      "background_sprite": "skills_panel_bg"
+    },
+    "button": {
+      "pos_x": -40,
+      "pos_y": 310,
+      "size_x": 8,
+      "size_y": 8,
+      "sprite": "upgrades_button"
+    }
+  },
+
   "gold_display": {
     "pos_x": -600,
     "pos_y": 252

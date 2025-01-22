@@ -73,6 +73,7 @@ init :: proc "c" () {
 
     gs.skills_system = init_skills_system()
     gs.quests_system = init_quests_system()
+    gs.upgrades_system = init_upgrades_system()
 
     for &e, kind in entity_data {
         setup_entity(&e, kind)
@@ -623,6 +624,24 @@ Image_Id :: enum {
 	dummy_hit3,
 	dummy_hit4,
 	dummy_hit5,
+	dummy_1,
+	dummy1_hit1,
+	dummy1_hit2,
+	dummy1_hit3,
+	dummy1_hit4,
+	dummy1_hit5,
+	dummy_2,
+	dummy2_hit1,
+	dummy2_hit2,
+	dummy2_hit3,
+	dummy2_hit4,
+	dummy2_hit5,
+	dummy_3,
+	dummy3_hit1,
+	dummy3_hit2,
+	dummy3_hit3,
+	dummy3_hit4,
+	dummy3_hit5,
 	arrow,
 	elemental_arrow,
 	skills_button,
@@ -640,6 +659,7 @@ Image_Id :: enum {
     back_focus,
     front_focus,
     bar,
+    upgrades_button
 }
 
 Image :: struct {
@@ -949,9 +969,10 @@ Game_State :: struct {
 	ui_hot_reload: UI_Hot_Reload,
 	skills_system: Skills_System,
     quests_system: Quests_System,
+    upgrades_system: Upgrades_System,
     ui: struct {
         skills_button_scale: f32,
-
+        upgrades_button_scale: f32,
         quest_button_scale: f32,
         skills_menu_alpha: f32,
         skills_tooltip_alpha: f32,
@@ -962,6 +983,7 @@ Game_State :: struct {
         skills_scroll_pos: f32,
         skills_scroll_initialized: bool,
     },
+    upgrades_menu_open: bool,
 }
 gs: ^Game_State
 
@@ -1083,6 +1105,22 @@ render :: proc() {
     if gs.skills_system.is_unlocked {
         focus_mode_skill_render()
         render_skill_menu_button()
+
+        has_upgrades_unlocked := false
+        for &skill in gs.skills_system.skills {
+            if skill.is_unlocked && skill.type == .strength_boost {
+                if skill.level >= 2 {
+                    has_upgrades_unlocked = true
+                    render_upgrades_menu_button()
+                }
+                break
+            }
+        }
+
+        if has_upgrades_unlocked && gs.upgrades_menu_open {
+            render_upgrades_menu()
+        }
+
         draw_sprite(
             pos = v2{0,310},
             img_id = .bar,
@@ -1096,8 +1134,10 @@ render :: proc() {
 
         if gs.skills_system.menu_open {
             render_skills_ui()
-        } else if gs.quests_system.menu_open {
+        } else if gs.quests_system.menu_open && has_unlocked_quests(&gs.quests_system) {
             render_quests_ui()
+        } else if gs.upgrades_menu_open && has_upgrades_unlocked {
+            render_upgrades_menu()
         }
 
         cfg := gs.ui_config.gold_display
@@ -1265,10 +1305,26 @@ draw_dummy_at_pos :: proc(en: ^Entity){
 
     health_percent := en.health / en.max_health
 
+    current_tier := gs.upgrades_system.dummy_tiers[gs.upgrades_system.current_tier]
+
     if en.animations.current_animation == "" {
-        draw_sprite(v2{en.pos.x, en.pos.y - 8}, .dummy_hit1, pivot = .bottom_center, xform=xform, z_layer=.player, color_override = color_override)
-    }else{
-        draw_current_animation(&en.animations, v2{en.pos.x, en.pos.y - 8}, pivot = .bottom_center, xform = xform, z_layer = .player, color_override = color_override)
+        draw_sprite(
+            v2{en.pos.x, en.pos.y - 8},
+            current_tier.base_sprite,
+            pivot = .bottom_center,
+            xform = xform,
+            z_layer = .player,
+            color_override = color_override,
+        )
+    } else {
+        draw_current_animation(
+            &en.animations,
+            v2{en.pos.x, en.pos.y - 8},
+            pivot = .bottom_center,
+            xform = xform,
+            z_layer = .player,
+            color_override = color_override,
+        )
     }
 
     if en.health < en.max_health {
@@ -1931,12 +1987,13 @@ setup_player :: proc(e: ^Entity) {
     e.target_bow_angle = 0
 }
 
-setup_dummy :: proc(e: ^Entity, is_ghost := false){
-    debug := true
+setup_dummy :: proc(e: ^Entity, is_ghost := false) {
     e.kind = .dummy
     e.flags |= { .allocated }
-    e.health = DUMMY_MAX_HEALTH
-    e.max_health = DUMMY_MAX_HEALTH
+
+    current_tier := gs.upgrades_system.dummy_tiers[gs.upgrades_system.current_tier]
+    e.health = current_tier.health
+    e.max_health = current_tier.health
 
     if is_ghost {
         e.flags |= { .ghost_dummy }
@@ -1944,11 +2001,7 @@ setup_dummy :: proc(e: ^Entity, is_ghost := false){
     }
 
     animations := create_animation_collection()
-
-    hit_frames := []Image_Id{
-        .dummy_hit1, .dummy_hit2, .dummy_hit3, .dummy_hit4,
-        .dummy_hit5, .dummy_hit1,
-    }
+    hit_frames := current_tier.frames
     hit_anim := create_animation(hit_frames, 0.08, false, "hit")
     add_animation(&animations, hit_anim)
 
@@ -2511,6 +2564,7 @@ aabb_size :: proc(aabb: AABB) -> Vector2 {
 UI_Config :: struct {
    skills: Skills_UI_Config,
    quests: Quest_UI_Config,
+   upgrades: Upgrades_UI_Config,
    gold_display: struct {
         pos_x: f32,
         pos_y: f32,
@@ -2617,6 +2671,7 @@ update_ui_state :: proc(gs: ^Game_State, dt: f32) {
             gs.skills_system.menu_open = !gs.skills_system.menu_open
             if gs.skills_system.menu_open {
                 gs.quests_system.menu_open = false
+                gs.upgrades_menu_open = false
             }
         }
     } else {
@@ -2631,10 +2686,26 @@ update_ui_state :: proc(gs: ^Game_State, dt: f32) {
             gs.quests_system.menu_open = !gs.quests_system.menu_open
             if gs.quests_system.menu_open {
                 gs.skills_system.menu_open = false
+                gs.upgrades_menu_open = false
             }
         }
     } else {
         animate_to_target_f32(&gs.ui.quest_button_scale, UI.NORMAL_SCALE, dt, UI.HOVER_SCALE_SPEED)
+    }
+
+    cfg_upgrades := gs.ui_config.upgrades.button
+    upgrades_button_pos := v2{cfg_upgrades.pos_x, cfg_upgrades.pos_y}
+
+    if is_point_in_rect(mouse_pos, upgrades_button_pos, UI.SKILL_BUTTON_SIZE) {
+        if key_just_pressed(.LEFT_MOUSE) {
+            gs.upgrades_menu_open = !gs.upgrades_menu_open
+            if gs.upgrades_menu_open {
+                gs.skills_system.menu_open = false
+                gs.quests_system.menu_open = false
+            }
+        }
+    } else {
+        animate_to_target_f32(&gs.ui.upgrades_button_scale, UI.NORMAL_SCALE, dt, UI.HOVER_SCALE_SPEED)
     }
 
     target_alpha := gs.skills_system.menu_open ? 1.0 : 0.0
@@ -3878,6 +3949,238 @@ get_next_quest_pair :: proc(quest: ^Quest, system: ^Quests_System) -> (^Quest, ^
     return quest1, quest2
 }
 
+//
+// :upgrades
+Upgrades_UI_Config :: struct {
+    menu: struct {
+        pos_x: f32,
+        pos_y: f32,
+        size_x: f32,
+        size_y: f32,
+        background_sprite: Image_Id,
+    },
+    button: struct {
+        pos_x: f32,
+        pos_y: f32,
+        size_x: f32,
+        size_y: f32,
+        sprite: Image_Id,
+    },
+}
+
+render_upgrades_menu_button :: proc() {
+    cfg := gs.ui_config.upgrades.button
+    button_pos := v2{cfg.pos_x, cfg.pos_y}
+    button_size := v2{cfg.size_x, cfg.size_y} * gs.ui.upgrades_button_scale
+
+    draw_sprite_with_size(
+        button_pos,
+        button_size,
+        cfg.sprite,
+        pivot = .center_center,
+        xform = xform_scale(v2{gs.ui.upgrades_button_scale, gs.ui.upgrades_button_scale}),
+        z_layer = .ui,
+    )
+}
+
+render_upgrades_menu :: proc() {
+    if !gs.upgrades_menu_open do return
+
+    cfg := gs.ui_config.upgrades
+    push_z_layer(.ui)
+
+    menu_pos := v2{cfg.menu.pos_x, cfg.menu.pos_y}
+    menu_size := v2{cfg.menu.size_x, cfg.menu.size_y}
+
+    draw_sprite_with_size(
+        menu_pos,
+        menu_size,
+        cfg.menu.background_sprite,
+        pivot = .center_center,
+        z_layer = .ui,
+    )
+
+    draw_text(
+        menu_pos + v2{-200, 200},
+        "Dummy Training Grounds",
+        scale = 1.5,
+        z_layer = .ui,
+    )
+
+    spacing := v2{0, -120}
+    start_pos := menu_pos + v2{-180, 120}
+
+    for tier, i in gs.upgrades_system.dummy_tiers {
+        pos := start_pos + spacing * f32(i)
+        render_tier_card(tier, i, pos)
+    }
+}
+
+render_tier_card :: proc(tier: Dummy_Tier, index: int, pos: Vector2) {
+    card_size := v2{400, 100}
+    is_current := index == gs.upgrades_system.current_tier
+
+    bg_color := is_current ? v4{0.3, 0.3, 0.3, 0.8} : v4{0.2, 0.2, 0.2, 0.8}
+    draw_rect_aabb(pos, card_size, col=bg_color, z_layer=.ui)
+
+    title_text := index == 0 ? "Basic Training Ground" : fmt.tprintf("Advanced Training Tier %d", index)
+    draw_text(pos + v2{10, 35}, title_text, z_layer=.ui)
+
+    stats_pos := pos + v2{10, 10}
+    draw_text(
+        stats_pos,
+        fmt.tprintf("Health: %.0f | XP Multiplier: %.1fx", tier.health, tier.xp_multiplier),
+        scale = 0.8,
+        z_layer = .ui,
+    )
+
+    if !tier.unlocked && index > 0 {
+        button_pos := pos + v2{300, 0}
+        button_size := v2{80, 30}
+        can_afford := gs.skills_system.gold >= tier.cost
+
+        button_color := can_afford ? v4{0.3, 0.5, 0.3, 1} : v4{0.5, 0.3, 0.3, 1}
+        draw_rect_aabb(button_pos, button_size, col=button_color, z_layer=.ui)
+
+        draw_text(
+            button_pos + v2{10, 15},
+            fmt.tprintf("%d Gold", tier.cost),
+            scale = 0.8,
+            z_layer = .ui,
+        )
+
+        if can_afford {
+            mouse_pos := mouse_pos_in_world_space()
+            button_bounds := aabb_make(button_pos, button_size, Pivot.bottom_left)
+            if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
+                unlock_dummy_tier(index)
+            }
+        }
+    } else if tier.unlocked && !is_current {
+        button_pos := pos + v2{300, 0}
+        button_size := v2{80, 30}
+        draw_rect_aabb(button_pos, button_size, col=v4{0.3, 0.5, 0.3, 1}, z_layer=.ui)
+
+        draw_text(
+            button_pos + v2{20, 15},
+            "Select",
+            scale = 0.8,
+            z_layer = .ui,
+        )
+
+        mouse_pos := mouse_pos_in_world_space()
+        button_bounds := aabb_make(button_pos, button_size, Pivot.bottom_left)
+        if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
+            gs.upgrades_system.current_tier = index
+        }
+    } else if is_current {
+        draw_text(
+            pos + v2{300, 15},
+            "ACTIVE",
+            scale = 0.8,
+            col = v4{0, 1, 0, 1},
+            z_layer = .ui,
+        )
+    }
+}
+
+unlock_dummy_tier :: proc(tier: int) {
+    if tier <= 0 || tier >= len(gs.upgrades_system.dummy_tiers) do return
+
+    tier_data := &gs.upgrades_system.dummy_tiers[tier]
+    if tier_data.unlocked do return
+
+    if gs.skills_system.gold >= tier_data.cost {
+        gs.skills_system.gold -= tier_data.cost
+        tier_data.unlocked = true
+        gs.upgrades_system.current_tier = tier
+
+        add_floating_text_params(
+            v2{-200, 150},
+            fmt.tprintf("Unlocked Training Tier %d!", tier),
+            v4{1, 0.8, 0, 1},
+            scale = 0.8,
+            target_scale = 1.0,
+            lifetime = 1.0,
+            velocity = v2{0, 75},
+        )
+    }
+}
+
+Upgrades_System :: struct {
+    dummy_tiers: [4]Dummy_Tier,
+    current_tier: int,
+}
+
+Dummy_Tier :: struct {
+    level: int,
+    health: f32,
+    xp_multiplier: f32,
+    cost: int,
+    frames: []Image_Id,
+    base_sprite: Image_Id,
+    unlocked: bool,
+}
+
+init_upgrades_system :: proc() -> Upgrades_System {
+    system := Upgrades_System{
+        current_tier = 0
+    }
+
+    system.dummy_tiers[0] = Dummy_Tier {
+        level = 0,
+        health = 100,
+        xp_multiplier = 1.0,
+        cost = 0,
+        frames = []Image_Id{
+            .dummy_hit1, .dummy_hit2, .dummy_hit3,
+            .dummy_hit4, .dummy_hit5, .dummy_hit1,
+        },
+        base_sprite = .dummy_hit1,
+        unlocked = true,
+    }
+
+    system.dummy_tiers[1] = Dummy_Tier{
+        level = 1,
+        health = 250,
+        xp_multiplier = 2.5,
+        cost = 1000,
+        frames = []Image_Id{
+            .dummy1_hit1, .dummy1_hit2, .dummy1_hit3,
+            .dummy1_hit4, .dummy1_hit5, .dummy1_hit1,
+        },
+        base_sprite = .dummy_1,
+        unlocked = false,
+    }
+
+    system.dummy_tiers[2] = Dummy_Tier{
+        level = 2,
+        health = 600,
+        xp_multiplier = 6.0,
+        cost = 5000,
+        frames = []Image_Id{
+            .dummy2_hit1, .dummy2_hit2, .dummy2_hit3,
+            .dummy2_hit4, .dummy2_hit5, .dummy2_hit1,
+        },
+        base_sprite = .dummy_2,
+        unlocked = false,
+    }
+
+    system.dummy_tiers[3] = Dummy_Tier{
+        level = 3,
+        health = 1500,
+        xp_multiplier = 15.0,
+        cost = 25000,
+        frames = []Image_Id{
+            .dummy3_hit1, .dummy3_hit2, .dummy3_hit3,
+            .dummy3_hit4, .dummy3_hit5, .dummy3_hit1,
+        },
+        base_sprite = .dummy_3,
+        unlocked = false,
+    }
+
+    return system
+}
 
 //
 // :skills
@@ -4060,7 +4363,7 @@ init_skills_system :: proc() -> Skills_System {
         active_skill = nil,
         dummies_killed = 0,
         is_unlocked = false,
-        gold = 0,
+        gold = 1000,
         menu_open = false,
         active_menu = .normal,
         passive_xp_timer = 0,
@@ -4271,20 +4574,20 @@ calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
 
 add_xp_to_active_skill :: proc(system: ^Skills_System, base_xp: int) -> int {
     if system.active_skill == nil {
-        return 0.0
+        return 0
     }
 
     if system.active_skill.level >= XP.MAX_LEVEL {
-        return 0.0
+        return 0
     }
 
     xp_multiplier := calculate_xp_boost(system)
-
     if system.focus_mode_active {
         xp_multiplier *= FOCUS_MODE_XP_MULTIPLIER
     }
 
-    total_xp := int(f32(base_xp) * xp_multiplier)
+    tier_multiplier := gs.upgrades_system.dummy_tiers[gs.upgrades_system.current_tier].xp_multiplier
+    total_xp := int(f32(base_xp) * xp_multiplier * tier_multiplier)
     prev_level := system.active_skill.level
 
     system.active_skill.current_xp += total_xp
