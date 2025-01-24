@@ -1,4 +1,4 @@
-    package main
+package main
 
 import "base:runtime"
 import "base:intrinsics"
@@ -1117,10 +1117,6 @@ render :: proc() {
             }
         }
 
-        if has_upgrades_unlocked && gs.upgrades_menu_open {
-            render_upgrades_menu()
-        }
-
         draw_sprite(
             pos = v2{0,310},
             img_id = .bar,
@@ -1307,9 +1303,10 @@ draw_dummy_at_pos :: proc(en: ^Entity){
 
     current_tier := gs.upgrades_system.dummy_tiers[gs.upgrades_system.current_tier]
 
+    base_pos := v2{en.pos.x, en.pos.y - 8}
     if en.animations.current_animation == "" {
         draw_sprite(
-            v2{en.pos.x, en.pos.y - 8},
+            base_pos,
             current_tier.base_sprite,
             pivot = .bottom_center,
             xform = xform,
@@ -1319,7 +1316,7 @@ draw_dummy_at_pos :: proc(en: ^Entity){
     } else {
         draw_current_animation(
             &en.animations,
-            v2{en.pos.x, en.pos.y - 8},
+            base_pos,
             pivot = .bottom_center,
             xform = xform,
             z_layer = .player,
@@ -1419,6 +1416,12 @@ mouse_pos_in_world_space :: proc() -> Vector2 {
 //
 // :dummies
 DUMMY_MAX_HEALTH :: 100.0
+DUMMY_POSITIONS := []Vector2{
+    {300, -320},
+    {450, -320},
+    {600, -320},
+    {750, -320},
+}
 
 spawn_dummy :: proc(position: Vector2, is_ghost := false) -> ^Entity {
     dummy := entity_create()
@@ -1484,21 +1487,20 @@ update_player :: proc(player: ^Entity, dt: f32) {
     }
 }
 
-find_random_target :: proc() -> ^Entity{
-    targets: [dynamic]^Entity
-    defer delete(targets)
+find_random_target :: proc() -> ^Entity {
+    oldest_dummy: ^Entity
+    oldest_time := f64(max(f64))
 
-    for &en in gs.entities{
-        if .allocated in en.flags && en.kind == .dummy{
-            append(&targets, &en)
+    for &en in gs.entities {
+        if .allocated in en.flags && en.kind == .dummy {
+            if en.spawn_time < f32(oldest_time) {
+                oldest_time = f64(en.spawn_time)
+                oldest_dummy = &en
+            }
         }
     }
 
-    if len(targets) > 0 {
-        return targets[rand.int_max(len(targets))]
-    }
-
-    return nil
+    return oldest_dummy
 }
 
 //
@@ -1522,9 +1524,9 @@ ELEMENTAL_ARROW_DAMAGE :: 40.0
 SHOOT_COOLDOWN :: 1.2
 ARROW_SPEED :: 1700.0
 ARROW_LIFETIME :: 0.6
-ACCURACY_VARIANCE :: 40.0
+ACCURACY_VARIANCE :: 0.0
 GRAVITY_EFFECT :: 6000.0
-HIT_CHANCE :: 0.90
+HIT_CHANCE :: 1.1
 DUMMY_TARGET_WIDTH :: 64.0
 DUMMY_TARGET_HEIGHT :: 64.0
 
@@ -1659,12 +1661,14 @@ spawn_single_arrow :: proc(player: ^Entity, target: ^Entity, arrow_type: Arrow_T
 
     direction := target_pos - shoot_pos
     distance := linalg.length(direction)
+    flight_time := distance / ARROW_SPEED
+
     direction_normalized := direction / distance
 
-    gravity := GRAVITY_EFFECT
-    arc_height := distance * 0.2
-    vertical_velocity := math.sqrt(2 * f32(gravity) * arc_height)
-    initial_velocity := direction_normalized * ARROW_SPEED + v2{0, vertical_velocity}
+    vertical_boost := GRAVITY_EFFECT * flight_time * 0.5
+
+    base_velocity := direction_normalized * ARROW_SPEED
+    initial_velocity := base_velocity + v2{0, vertical_boost}
 
     setup_arrow(arrow, shoot_pos, target_pos, arrow_type)
     arrow.arrow_data.velocity = initial_velocity
@@ -1731,6 +1735,7 @@ Entity :: struct {
     weak_point_pos: Vector2,
     weak_point_radius: f32,
     weak_point_glow_intensity: f32,
+    spawn_time: f32,
 }
 
 entity_data: [Entity_Kind]Entity
@@ -1990,6 +1995,7 @@ setup_player :: proc(e: ^Entity) {
 setup_dummy :: proc(e: ^Entity, is_ghost := false) {
     e.kind = .dummy
     e.flags |= { .allocated }
+    e.spawn_time = f32(seconds_since_init())
 
     current_tier := gs.upgrades_system.dummy_tiers[gs.upgrades_system.current_tier]
     e.health = current_tier.health
@@ -2776,23 +2782,30 @@ draw_skill_tooltip :: proc(skill: ^Skill) {
 }
 
 has_active_dummy :: proc() -> bool {
+    active_dummies := 0
+    max_dummies := gs.upgrades_system.multiple_dummy_tiers[gs.upgrades_system.current_multiple_tier].max_dummies
+
     for &en in gs.entities {
         if .allocated in en.flags && en.kind == .dummy {
-            return true
+            active_dummies += 1
         }
     }
-    return false
+
+    return active_dummies >= max_dummies
 }
 
 check_spawn_button :: proc() {
-    if has_active_dummy() {
-        return
+    active_dummies := 0
+    for &en in gs.entities {
+        if .allocated in en.flags && en.kind == .dummy {
+            active_dummies += 1
+        }
     }
 
-    if draw_frame.coord_space.proj == {} {
+    current_tier := &gs.upgrades_system.multiple_dummy_tiers[gs.upgrades_system.current_multiple_tier]
+    if active_dummies >= current_tier.max_dummies {
         return
     }
-
 
     cfg := gs.ui_config.spawner
     bounds_act := v2{cfg.bounds_x, cfg.bounds_y}
@@ -2801,11 +2814,24 @@ check_spawn_button :: proc() {
     button_bounds := aabb_make(v2{cfg.pos_x, cfg.pos_y}, bounds_act, Pivot.center_center)
     hover := aabb_contains(button_bounds, mouse_pos)
 
-    if hover &&  key_just_pressed(.LEFT_MOUSE) {
-        spawn_dummy(v2{300, -320})
+    if hover && key_just_pressed(.LEFT_MOUSE) {
+        for pos in DUMMY_POSITIONS[0:current_tier.max_dummies] {
+            position_occupied := false
+            for &en in gs.entities {
+                if .allocated in en.flags && en.kind == .dummy {
+                    if linalg.length(en.pos - pos) < 10 {
+                        position_occupied = true
+                        break
+                    }
+                }
+            }
+            if !position_occupied {
+                spawn_dummy(pos)
+                break
+            }
+        }
     }
 }
-
 
 //
 // :systems
@@ -3967,6 +3993,8 @@ Upgrades_UI_Config :: struct {
         pos_y: f32,
         size_x: f32,
         size_y: f32,
+        bound_x: f32,
+        bound_y: f32,
         sprite: Image_Id,
     },
     list: struct {
@@ -3978,6 +4006,8 @@ Upgrades_UI_Config :: struct {
         button_offset_x: f32,
         button_width: f32,
         button_height: f32,
+        bound_x: f32,
+        bound_y: f32,
     },
 }
 
@@ -4028,7 +4058,13 @@ render_upgrades_menu :: proc() {
             tier_costs = []int{0, 1000, 5000, 25000},
             unlocked = true,
         },
-        // ADD MORE UPGRADES; MAYBE EVEN MORE XP?
+        {
+            name = "Multiple Dummies",
+            current_tier = &gs.upgrades_system.current_multiple_tier,
+            max_tier = len(gs.upgrades_system.multiple_dummy_tiers) - 1,
+            tier_costs = []int{0, 2000, 10000},
+            unlocked = true,
+        },
     }
     defer delete(upgrades)
 
@@ -4056,8 +4092,9 @@ render_upgrades_menu :: proc() {
                 current_y,
             }
             button_size := v2{list_cfg.button_width, list_cfg.button_height}
+            button_bounds := v2{list_cfg.bound_x, list_cfg.bound_y}
             can_afford := gs.skills_system.gold >= upgrade.tier_costs[next_tier]
-            hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, button_size)
+            hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, button_bounds)
 
             draw_sprite_with_size(
                 button_pos,
@@ -4077,7 +4114,11 @@ render_upgrades_menu :: proc() {
             )
 
             if hover && can_afford && key_just_pressed(.LEFT_MOUSE) {
-                unlock_dummy_tier(next_tier)
+                if upgrade.name == "Dummy Training" {
+                    unlock_dummy_tier(next_tier)
+                } else if upgrade.name == "Multiple Dummies" {
+                    unlock_multiple_dummy_tier(next_tier)
+                }
             }
         } else {
             draw_text(
@@ -4116,9 +4157,34 @@ unlock_dummy_tier :: proc(tier: int) {
     }
 }
 
+unlock_multiple_dummy_tier :: proc(tier: int) {
+    if tier <= 0 || tier >= len(gs.upgrades_system.multiple_dummy_tiers) do return
+
+    tier_data := &gs.upgrades_system.multiple_dummy_tiers[tier]
+    if tier_data.unlocked do return
+
+    if gs.skills_system.gold >= tier_data.cost {
+        gs.skills_system.gold -= tier_data.cost
+        tier_data.unlocked = true
+        gs.upgrades_system.current_multiple_tier = tier
+
+        add_floating_text_params(
+            v2{-200, 150},
+            fmt.tprintf("Unlocked Multiple Dummies Tier %d!", tier),
+            v4{1, 0.8, 0, 1},
+            scale = 0.8,
+            target_scale = 1.0,
+            lifetime = 1.0,
+            velocity = v2{0, 75},
+        )
+    }
+}
+
 Upgrades_System :: struct {
     dummy_tiers: [4]Dummy_Tier,
     current_tier: int,
+    multiple_dummy_tiers: [3]Multiple_Dummy_Tier,
+    current_multiple_tier: int,
 }
 
 Dummy_Tier :: struct {
@@ -4131,12 +4197,20 @@ Dummy_Tier :: struct {
     unlocked: bool,
 }
 
+Multiple_Dummy_Tier :: struct {
+    unlocked: bool,
+    cost: int,
+    max_dummies: int,
+}
+
 init_upgrades_system :: proc() -> Upgrades_System {
     system := Upgrades_System{
-        current_tier = 0
+        current_tier = 0,
+        current_multiple_tier = 0
     }
 
     dummy_training_grounds_init(&system)
+    multiple_dummy_tier_init(&system)
 
     return system
 }
@@ -4174,7 +4248,7 @@ dummy_training_grounds_init :: proc(system: ^Upgrades_System) {
         xp_multiplier = 2.5,
         cost = 1000,
         frames = tier1_frames,
-        base_sprite = .dummy_1,
+        base_sprite = .dummy1_hit1,
         unlocked = false,
     }
 
@@ -4192,7 +4266,7 @@ dummy_training_grounds_init :: proc(system: ^Upgrades_System) {
         xp_multiplier = 6.0,
         cost = 5000,
         frames = tier2_frames,
-        base_sprite = .dummy_2,
+        base_sprite = .dummy2_hit1,
         unlocked = false,
     }
 
@@ -4210,8 +4284,26 @@ dummy_training_grounds_init :: proc(system: ^Upgrades_System) {
         xp_multiplier = 15.0,
         cost = 25000,
         frames = tier3_frames,
-        base_sprite = .dummy_3,
+        base_sprite = .dummy3_hit1,
         unlocked = false,
+    }
+}
+
+multiple_dummy_tier_init :: proc(system: ^Upgrades_System) {
+    system.multiple_dummy_tiers[0] = Multiple_Dummy_Tier{
+        unlocked = true,
+        cost = 0,
+        max_dummies = 1,
+    }
+    system.multiple_dummy_tiers[1] = Multiple_Dummy_Tier{
+        unlocked = false,
+        cost = 2000,
+        max_dummies = 2,
+    }
+    system.multiple_dummy_tiers[2] = Multiple_Dummy_Tier{
+        unlocked = false,
+        cost = 10000,
+        max_dummies = 4,
     }
 }
 

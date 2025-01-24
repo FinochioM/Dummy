@@ -223,7 +223,9 @@
             "title_offset_x": 10,
             "button_offset_x": 400,
             "button_width": 20,
-            "button_height": 5
+            "button_height": 5,
+            "bound_x": 80,
+            "bound_y": 20,
         }
     },
 
