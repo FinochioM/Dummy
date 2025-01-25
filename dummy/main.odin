@@ -3587,8 +3587,16 @@ get_quest_type_name :: proc(type: Quest_Type) -> string {
 check_quest_unlocks :: proc(skill: ^Skill) {
     if skill == nil do return
 
+    prev_quest_unlocked := true
+    prev_quest_type: Quest_Type
+
     for &quest in gs.quests_system.quests {
         if !quest.is_unlocked && quest.required_skill == skill.type {
+            if (!is_advanced_quest(quest.type) && !prev_quest_unlocked) ||
+               (is_advanced_quest(quest.type) && (!has_unlocked_all_normal_quests(&gs.quests_system) || !prev_quest_unlocked)) {
+                continue
+            }
+
             if skill.level >= quest.required_skill_levels[0] {
                 quest.is_unlocked = true
             }
@@ -3615,6 +3623,9 @@ check_quest_unlocks :: proc(skill: ^Skill) {
                 }
             }
         }
+
+        prev_quest_unlocked = quest.is_unlocked
+        prev_quest_type = quest.type
     }
 }
 
@@ -3635,39 +3646,40 @@ render_quests_ui :: proc() {
         z_layer = .ui,
     )
 
-    button_pos := menu_pos + v2{cfg.switch_button.offset_x, cfg.switch_button.offset_y}
-    button_size := v2{cfg.switch_button.size_x, cfg.switch_button.size_y}
-    btn_bounds := v2{cfg.switch_button.bounds_x, cfg.switch_button.bounds_y}
-    hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, btn_bounds)
+    if has_unlocked_all_normal_quests(&gs.quests_system) {
+        button_pos := menu_pos + v2{cfg.switch_button.offset_x, cfg.switch_button.offset_y}
+        button_size := v2{cfg.switch_button.size_x, cfg.switch_button.size_y}
+        btn_bounds := v2{cfg.switch_button.bounds_x, cfg.switch_button.bounds_y}
+        hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, btn_bounds)
 
-    draw_sprite_with_size(
-        button_pos,
-        button_size,
-        img_id = !hover ? Image_Id.next_skill_button_bg : Image_Id.next_skill_button_active_bg,
-        pivot = .center_center,
-        z_layer = .ui,
-    )
+        draw_sprite_with_size(
+            button_pos,
+            button_size,
+            img_id = !hover ? Image_Id.next_skill_button_bg : Image_Id.next_skill_button_active_bg,
+            pivot = .center_center,
+            z_layer = .ui,
+        )
 
-    button_text := gs.quests_system.active_menu == .normal ? "Advanced" : "Normal"
-    draw_text(
-        button_pos,
-        button_text,
-        scale = auto_cast cfg.switch_button.text_scale,
-        pivot = .center_center,
-        z_layer = .ui,
-    )
+        button_text := gs.quests_system.active_menu == .normal ? "Advanced" : "Normal"
+        draw_text(
+            button_pos,
+            button_text,
+            scale = auto_cast cfg.switch_button.text_scale,
+            pivot = .center_center,
+            z_layer = .ui,
+        )
 
-    if hover && key_just_pressed(.LEFT_MOUSE) {
-        gs.quests_system.active_menu = gs.quests_system.active_menu == .normal ? .advanced : .normal
+        if hover && key_just_pressed(.LEFT_MOUSE) {
+            gs.quests_system.active_menu = gs.quests_system.active_menu == .normal ? .advanced : .normal
+        }
     }
 
-    if gs.quests_system.active_menu == .normal {
+    if gs.quests_system.active_menu == .normal || !has_unlocked_all_normal_quests(&gs.quests_system) {
         draw_normal_quests_content(menu_pos)
     } else {
         draw_advanced_quests_content(menu_pos)
     }
 }
-
 
 render_quest_entry_configured :: proc(quest: ^Quest, pos: Vector2) {
     cfg := gs.ui_config.quests.quest_entry
@@ -4544,7 +4556,7 @@ init_skills_system :: proc() -> Skills_System {
         active_skill = nil,
         dummies_killed = 0,
         is_unlocked = false,
-        gold = 100000,
+        gold = 1000000,
         menu_open = false,
         active_menu = .normal,
         passive_xp_timer = 0,
@@ -4599,6 +4611,15 @@ init_skills_system :: proc() -> Skills_System {
     return system
 }
 
+has_unlocked_all_normal_skills :: proc(system: ^Skills_System) -> bool {
+    for skill in system.skills {
+        if !skill.is_unlocked {
+            return false
+        }
+    }
+    return true
+}
+
 calculate_xp_boost :: proc(system: ^Skills_System) -> f32 {
     for &skill in system.skills {
         if skill.is_unlocked && skill.type == .xp_boost {
@@ -4608,6 +4629,15 @@ calculate_xp_boost :: proc(system: ^Skills_System) -> f32 {
         }
     }
     return 1.0
+}
+
+has_unlocked_all_normal_quests :: proc(system: ^Quests_System) -> bool {
+    for quest in system.quests {
+        if !is_advanced_quest(quest.type) && !quest.is_unlocked {
+            return false
+        }
+    }
+    return true
 }
 
 calculate_passive_xp_for_skill :: proc(commander_level: int, xp_to_next: int) -> int {
@@ -4839,37 +4869,40 @@ render_skills_ui :: proc() {
         menu_size,
         cfg.menu.background_sprite,
         pivot = .center_center,
-        color_override = v4{0,0,0,1-alpha})
-
-    button_pos := menu_pos + v2{cfg.switch_button.offset_x, cfg.switch_button.offset_y}
-    button_size := v2{cfg.switch_button.size_x, cfg.switch_button.size_y}
-    btn_bounds := v2{cfg.switch_button.bounds_x, cfg.switch_button.bounds_y}
-    hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, btn_bounds)
-
-    draw_sprite_with_size(
-        button_pos,
-        button_size,
-        img_id = !hover ? Image_Id.next_skill_button_bg : Image_Id.next_skill_button_active_bg,
-        pivot = .center_center,
-        z_layer = .ui,
+        color_override = v4{0,0,0,1-alpha}
     )
 
-    button_text := gs.skills_system.active_menu == .normal ? "Advanced" : "Normal"
-    draw_text(
-        button_pos,
-        button_text,
-        scale = auto_cast  cfg.switch_button.text_scale,
-        pivot = .center_center,
-        z_layer = .ui,
-    )
+    if has_unlocked_all_normal_skills(&gs.skills_system) {
+        button_pos := menu_pos + v2{cfg.switch_button.offset_x, cfg.switch_button.offset_y}
+        button_size := v2{cfg.switch_button.size_x, cfg.switch_button.size_y}
+        btn_bounds := v2{cfg.switch_button.bounds_x, cfg.switch_button.bounds_y}
+        hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, btn_bounds)
 
-    if hover && key_just_pressed(.LEFT_MOUSE) {
-        gs.skills_system.active_menu = gs.skills_system.active_menu == .normal ? .advanced : .normal
+        draw_sprite_with_size(
+            button_pos,
+            button_size,
+            img_id = !hover ? Image_Id.next_skill_button_bg : Image_Id.next_skill_button_active_bg,
+            pivot = .center_center,
+            z_layer = .ui,
+        )
+
+        button_text := gs.skills_system.active_menu == .normal ? "Advanced" : "Normal"
+        draw_text(
+            button_pos,
+            button_text,
+            scale = auto_cast cfg.switch_button.text_scale,
+            pivot = .center_center,
+            z_layer = .ui,
+        )
+
+        if hover && key_just_pressed(.LEFT_MOUSE) {
+            gs.skills_system.active_menu = gs.skills_system.active_menu == .normal ? .advanced : .normal
+        }
     }
 
-    if gs.skills_system.active_menu == .normal {
+    if gs.skills_system.active_menu == .normal || !has_unlocked_all_normal_skills(&gs.skills_system) {
         draw_normal_skills_content(menu_pos, alpha)
-    }else {
+    } else {
         draw_advanced_skills_content(menu_pos, alpha)
     }
 }
@@ -5132,16 +5165,6 @@ draw_unlocked_advanced_skills :: proc(start_pos: Vector2, alpha: f32) {
             v2{rect_width * skill.display_xp, rect_height},
             col = Colors.xp_bar_fill,
             z_layer = cfg.xp_bar.zlayer_xp_2
-        )
-
-        xp_text_pos := bar_pos + v2{bar_width + 10, 0}
-        draw_text(
-            xp_text_pos,
-            fmt.tprintf("%d/%d", skill.current_xp, skill.xp_to_next_level),
-            col = Colors.text * v4{1,1,1,1},
-            scale = 0.8,
-            pivot = .center_left,
-            z_layer = cfg.xp_bar.zlayer_xp
         )
 
         is_active := gs.skills_system.active_skill == &gs.skills_system.advanced_skills[i]
