@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<objects serializationModel="Studio.02.02.00">
+	<object class="AudioFile" id="{88465750-09ab-4da4-92b3-3cca1d8c974e}">
+		<property name="assetPath">
+			<value>Bow &amp; Arrow Sound Effect- #backgroundsoundeffects.mp3</value>
+		</property>
+		<property name="isStreaming">
+			<value>true</value>
+		</property>
+		<property name="frequencyInKHz">
+			<value>44.0999985</value>
+		</property>
+		<property name="channelCount">
+			<value>2</value>
+		</property>
+		<property name="length">
+			<value>15.908571428571429</value>
+		</property>
+		<relationship name="masterAssetFolder">
+			<destination>{445fe4dc-a1ce-44e8-b7ae-046b376f65da}</destination>
+		</relationship>
+	</object>
+</objects>

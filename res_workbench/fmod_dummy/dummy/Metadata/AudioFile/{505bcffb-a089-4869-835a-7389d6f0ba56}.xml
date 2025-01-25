@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<objects serializationModel="Studio.02.02.00">
+	<object class="AudioFile" id="{505bcffb-a089-4869-835a-7389d6f0ba56}">
+		<property name="assetPath">
+			<value>Draw Bow And Fire - Sound Effect (HD) [2etT7_6pH4g].mp3</value>
+		</property>
+		<property name="frequencyInKHz">
+			<value>44.0999985</value>
+		</property>
+		<property name="channelCount">
+			<value>2</value>
+		</property>
+		<property name="length">
+			<value>4.4146938775510201</value>
+		</property>
+		<relationship name="masterAssetFolder">
+			<destination>{445fe4dc-a1ce-44e8-b7ae-046b376f65da}</destination>
+		</relationship>
+	</object>
+</objects>

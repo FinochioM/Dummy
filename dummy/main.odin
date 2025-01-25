@@ -71,6 +71,8 @@ init :: proc "c" () {
 
 	// :init
 	gs = &app_state.game
+    init_splash_state(gs)
+
     gs.ui_hot_reload = init_ui_hot_reload()
     gs.ui_config = gs.ui_hot_reload.config
 
@@ -78,6 +80,7 @@ init :: proc "c" () {
     gs.quests_system = init_quests_system()
     gs.upgrades_system = init_upgrades_system()
     gs.menu = init_menu()
+
 
     for &e, kind in entity_data {
         setup_entity(&e, kind)
@@ -665,6 +668,8 @@ Image_Id :: enum {
     bar,
     upgrades_button,
     title,
+    fmod_logo,
+    maki_logo,
 }
 
 Image :: struct {
@@ -990,8 +995,15 @@ Game_State :: struct {
     },
     upgrades_menu_open: bool,
     menu: Game_Menu,
+    splash_state: Splash_State,
+    state_kind: Game_State_Kind,
 }
 gs: ^Game_State
+
+Game_State_Kind :: enum {
+    splash,
+    game,
+}
 
 // :update
 
@@ -1008,56 +1020,63 @@ game_res_h :: 720
 
 update :: proc() {
 	using linalg
-
 	dt := sapp.frame_duration()
 
-    width := sapp.width()
-    height := sapp.height()
-    update_projection(int(width), int(height))
+    #partial switch gs.state_kind {
+        case .splash: {
+            update_splash_screen(gs, dt)
+        }
 
-	update_menu(&gs.menu)
+        case .game: {
+            width := sapp.width()
+            height := sapp.height()
+            update_projection(int(width), int(height))
 
-	if gs.menu.state == .game {
-        focus_mode_skill_update(f32(dt))
+        	update_menu(&gs.menu)
 
-    	for &en in gs.entities {
-    		en.frame = {}
-    	}
+        	if gs.menu.state == .game {
+                focus_mode_skill_update(f32(dt))
 
-        player := get_player()
+            	for &en in gs.entities {
+            		en.frame = {}
+            	}
 
-	    update_passive_skill_xp(f32(dt))
+                player := get_player()
 
-        // UPDATE ENTITIES
-    	for &en in gs.entities {
-            if .allocated in en.flags {
-                #partial switch en.kind {
-                    case .player: update_player(&en, f32(dt))
-                    case .arrow: update_arrow(&en, f32(dt))
-                    case .dummy: {
-                        update_current_animation(&en.animations, f32(dt))
-                        if .ghost_dummy in en.flags {
-                            en.ghost_timer -= f32(dt)
-                            if en.ghost_timer <= 0 {
-                                entity_destroy(&en, f32(dt))
+        	    update_passive_skill_xp(f32(dt))
+
+                // UPDATE ENTITIES
+            	for &en in gs.entities {
+                    if .allocated in en.flags {
+                        #partial switch en.kind {
+                            case .player: update_player(&en, f32(dt))
+                            case .arrow: update_arrow(&en, f32(dt))
+                            case .dummy: {
+                                update_current_animation(&en.animations, f32(dt))
+                                if .ghost_dummy in en.flags {
+                                    en.ghost_timer -= f32(dt)
+                                    if en.ghost_timer <= 0 {
+                                        entity_destroy(&en, f32(dt))
+                                    }
+                                }
                             }
                         }
                     }
-                }
+            	}
+
+            	check_spawn_button()
+            	update_quests_system(&gs.quests_system, f32(dt))
+                update_floating_texts(f32(dt))
             }
-    	}
 
-    	check_spawn_button()
-    	update_quests_system(&gs.quests_system, f32(dt))
-        update_floating_texts(f32(dt))
+            update_sound()
+
+            check_and_reload(&gs.ui_hot_reload)
+            gs.ui_config = gs.ui_hot_reload.config
+
+        	update_ui_state(gs, f32(dt))
+        }
     }
-
-    update_sound()
-
-    check_and_reload(&gs.ui_hot_reload)
-    gs.ui_config = gs.ui_hot_reload.config
-
-	update_ui_state(gs, f32(dt))
 
 	gs.ticks += 1
 }
@@ -1081,109 +1100,117 @@ render :: proc() {
     }
     set_coord_space(coord)
 
-    draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.background, z_layer = .background)
-    draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.midground, z_layer = .midground)
-    draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.foreground, z_layer = .foreground)
-
-	render_menu(&gs.menu)
-
-	if gs.menu.state == .game {
-       if !has_active_dummy() {
-            cfg := gs.ui_config.spawner
-
-            button_pos := v2{cfg.pos_x, cfg.pos_y}
-            button_size := v2{cfg.size_x, cfg.size_y}
-            button_bounds := v2{cfg.bounds_x, cfg.bounds_y}
-            hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, button_bounds)
-
-            draw_sprite_with_size(
-                button_pos,
-                button_size,
-                img_id = !hover ? Image_Id.next_skill_button_bg : Image_Id.next_skill_button_active_bg,
-                pivot = .center_center,
-                z_layer = .ui,
-            )
-
-            text_pos := v2{cfg.txt_pos_x, cfg.txt_pos_y}
-            draw_text(text_pos, "Spawn Dummy", scale = 1.0, z_layer = .ui)
+    #partial switch gs.state_kind {
+        case .splash: {
+            draw_splash_screen(gs)
         }
 
-    	for &en in gs.entities {
-    		if .allocated in en.flags {
-    			#partial switch en.kind {
-    				case .player: {
-    				    draw_player_at_pos(&en, v2{-435, -315})
-    				}
-    				case .dummy: {
-    				    draw_dummy_at_pos(&en)
-    				}
-    				case .arrow: {
-    				    draw_arrow_at_pos(&en)
-    				}
-    			}
-    		}
-    	}
+        case .game: {
+            draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.background, z_layer = .background)
+            draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.midground, z_layer = .midground)
+            draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.foreground, z_layer = .foreground)
 
-        render_floating_texts()
+        	render_menu(&gs.menu)
 
-        if gs.skills_system.is_unlocked {
-            focus_mode_skill_render()
-            render_skill_menu_button()
+        	if gs.menu.state == .game {
+               if !has_active_dummy() {
+                    cfg := gs.ui_config.spawner
 
-            has_upgrades_unlocked := false
-            for &skill in gs.skills_system.skills {
-                if skill.is_unlocked && skill.type == .strength_boost {
-                    if skill.level >= 2 {
-                        has_upgrades_unlocked = true
-                        render_upgrades_menu_button()
-                    }
-                    break
+                    button_pos := v2{cfg.pos_x, cfg.pos_y}
+                    button_size := v2{cfg.size_x, cfg.size_y}
+                    button_bounds := v2{cfg.bounds_x, cfg.bounds_y}
+                    hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, button_bounds)
+
+                    draw_sprite_with_size(
+                        button_pos,
+                        button_size,
+                        img_id = !hover ? Image_Id.next_skill_button_bg : Image_Id.next_skill_button_active_bg,
+                        pivot = .center_center,
+                        z_layer = .ui,
+                    )
+
+                    text_pos := v2{cfg.txt_pos_x, cfg.txt_pos_y}
+                    draw_text(text_pos, "Spawn Dummy", scale = 1.0, z_layer = .ui)
                 }
-            }
 
-            draw_sprite(
-                pos = v2{0,310},
-                img_id = .bar,
-                pivot = .center_center,
-                z_layer = .ui,
-            )
+            	for &en in gs.entities {
+            		if .allocated in en.flags {
+            			#partial switch en.kind {
+            				case .player: {
+            				    draw_player_at_pos(&en, v2{-435, -315})
+            				}
+            				case .dummy: {
+            				    draw_dummy_at_pos(&en)
+            				}
+            				case .arrow: {
+            				    draw_arrow_at_pos(&en)
+            				}
+            			}
+            		}
+            	}
 
-            if has_unlocked_quests(&gs.quests_system) {
-                render_quest_menu_button()
-            }
+                render_floating_texts()
 
-            if gs.skills_system.menu_open {
-                render_skills_ui()
-            } else if gs.quests_system.menu_open && has_unlocked_quests(&gs.quests_system) {
-                render_quests_ui()
-            } else if gs.upgrades_menu_open && has_upgrades_unlocked {
-                render_upgrades_menu()
-            }
+                if gs.skills_system.is_unlocked {
+                    focus_mode_skill_render()
+                    render_skill_menu_button()
 
-            cfg := gs.ui_config.gold_display
-            pos := v2{cfg.pos_x, cfg.pos_y}
+                    has_upgrades_unlocked := false
+                    for &skill in gs.skills_system.skills {
+                        if skill.is_unlocked && skill.type == .strength_boost {
+                            if skill.level >= 2 {
+                                has_upgrades_unlocked = true
+                                render_upgrades_menu_button()
+                            }
+                            break
+                        }
+                    }
 
-            sprite_pos := v2{cfg.sprite_pos_x, cfg.sprite_pos_y}
-            sprite_size := v2{cfg.sprite_size_x, cfg.sprite_size_y}
+                    draw_sprite(
+                        pos = v2{0,310},
+                        img_id = .bar,
+                        pivot = .center_center,
+                        z_layer = .ui,
+                    )
 
-            draw_nores_sprite_with_size(
-                sprite_pos,
-                sprite_size,
-                cfg.sprite,
-                pivot = .center_center,
-                z_layer = .ui,
-            )
+                    if has_unlocked_quests(&gs.quests_system) {
+                        render_quest_menu_button()
+                    }
 
-            text_pos := pos + v2{cfg.text_offset_x, cfg.text_offset_y}
-            draw_text(
-                text_pos,
-                fmt.tprintf("%d Gold", gs.skills_system.gold),
-                col = v4{0,0,0,1},
-                scale = auto_cast cfg.text_scale,
-                z_layer = .ui,
-            )
+                    if gs.skills_system.menu_open {
+                        render_skills_ui()
+                    } else if gs.quests_system.menu_open && has_unlocked_quests(&gs.quests_system) {
+                        render_quests_ui()
+                    } else if gs.upgrades_menu_open && has_upgrades_unlocked {
+                        render_upgrades_menu()
+                    }
+
+                    cfg := gs.ui_config.gold_display
+                    pos := v2{cfg.pos_x, cfg.pos_y}
+
+                    sprite_pos := v2{cfg.sprite_pos_x, cfg.sprite_pos_y}
+                    sprite_size := v2{cfg.sprite_size_x, cfg.sprite_size_y}
+
+                    draw_nores_sprite_with_size(
+                        sprite_pos,
+                        sprite_size,
+                        cfg.sprite,
+                        pivot = .center_center,
+                        z_layer = .ui,
+                    )
+
+                    text_pos := pos + v2{cfg.text_offset_x, cfg.text_offset_y}
+                    draw_text(
+                        text_pos,
+                        fmt.tprintf("%d Gold", gs.skills_system.gold),
+                        col = v4{0,0,0,1},
+                        scale = auto_cast cfg.text_scale,
+                        z_layer = .ui,
+                    )
+                }
+        	}
         }
-	}
+    }
 
 	gs.ticks += 1
 }
@@ -1544,8 +1571,8 @@ Arrow_Data :: struct {
     arrow_type: Arrow_Type,
 }
 
-ARROW_BASE_DAMAGE :: 150.0 // 20
-ARROW_DAMAGE :: 150.0 // 20
+ARROW_BASE_DAMAGE :: 20.0 // 20
+ARROW_DAMAGE :: 20.0 // 20
 ELEMENTAL_ARROW_DAMAGE :: 40.0
 SHOOT_COOLDOWN :: 1.2
 ARROW_SPEED :: 1700.0
@@ -1827,7 +1854,12 @@ damage_entity :: proc(e: ^Entity, base_damage: f32, is_elemental := false) {
         }
     }
 
+    if e.kind == .dummy && !e.has_weak_point{
+        play_sound("dummy_hit")
+    }
+
     if e.kind == .dummy && e.has_weak_point {
+        play_sound("dummy_hit_weakpoint")
         hit_pos := e.pos + e.weak_point_pos
         arrow_to_weak_point := hit_pos - e.pos
         if linalg.length(arrow_to_weak_point) <= e.weak_point_radius {
@@ -6019,4 +6051,67 @@ update_menu :: proc(menu: ^Game_Menu) {
             gs.player_handle = entity_to_handle(en^)
         }
     }
+}
+
+//
+// :splash
+
+Splash_State :: struct {
+    current_screen: int,
+    timer: f32,
+    fade_in: bool,
+    alpha: f32,
+}
+
+init_splash_state :: proc(gs: ^Game_State){
+    gs.splash_state = Splash_State{
+        current_screen = 0,
+        timer = 0,
+        fade_in = true,
+        alpha = 0,
+    }
+
+    gs.state_kind = .splash
+}
+
+update_splash_screen :: proc(gs: ^Game_State, delta_t: f64) {
+    FADE_SPEED :: 2.0
+    DISPLAY_TIME :: 2.0
+
+    if gs.splash_state.fade_in {
+        gs.splash_state.alpha += FADE_SPEED * f32(delta_t)
+        if gs.splash_state.alpha >= 1.0 {
+            gs.splash_state.alpha = 1.0
+            gs.splash_state.fade_in = false
+            gs.splash_state.timer = DISPLAY_TIME
+        }
+    } else {
+        gs.splash_state.timer -= f32(delta_t)
+        if gs.splash_state.timer <= 0 {
+            gs.splash_state.alpha -= FADE_SPEED * f32(delta_t)
+            if gs.splash_state.alpha <= 0 {
+                gs.splash_state.alpha = 0
+                gs.splash_state.current_screen += 1
+                if gs.splash_state.current_screen >= 2 {
+                    gs.state_kind = .game
+                } else {
+                    gs.splash_state.fade_in = true
+                }
+            }
+        }
+    }
+}
+
+draw_splash_screen :: proc(gs: ^Game_State) {
+    draw_rect_aabb(v2{game_res_w * -0.5, game_res_h * -0.5},
+                  v2{game_res_w, game_res_h},
+                  col = v4{0, 0, 0, 1})
+
+    splash_image := gs.splash_state.current_screen == 0 ? Image_Id.fmod_logo : Image_Id.maki_logo
+
+    color := v4{1, 1, 1, gs.splash_state.alpha}
+    draw_rect_aabb(v2{game_res_w * -0.5, game_res_h * -0.5},
+          v2{game_res_w, game_res_h},
+          col = color,
+          img_id = splash_image)
 }

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<objects serializationModel="Studio.02.02.00">
+	<object class="AudioFile" id="{b77dc299-9fba-4832-ac40-42d408fdc60e}">
+		<property name="assetPath">
+			<value>Satisfying Arrow Impact Sound Effect High Quality.mp3</value>
+		</property>
+		<property name="frequencyInKHz">
+			<value>44.0999985</value>
+		</property>
+		<property name="channelCount">
+			<value>2</value>
+		</property>
+		<property name="length">
+			<value>4.6497959183673467</value>
+		</property>
+		<relationship name="masterAssetFolder">
+			<destination>{445fe4dc-a1ce-44e8-b7ae-046b376f65da}</destination>
+		</relationship>
+	</object>
+</objects>
