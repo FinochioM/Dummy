@@ -1037,7 +1037,7 @@ update :: proc() {
                     if .ghost_dummy in en.flags {
                         en.ghost_timer -= f32(dt)
                         if en.ghost_timer <= 0 {
-                            entity_destroy(&en)
+                            entity_destroy(&en, f32(dt))
                         }
                     }
                 }
@@ -1052,7 +1052,6 @@ update :: proc() {
 	update_quests_system(&gs.quests_system, f32(dt))
     update_floating_texts(f32(dt))
 	update_ui_state(gs, f32(dt))
-
 
 	gs.ticks += 1
 }
@@ -1518,8 +1517,8 @@ Arrow_Data :: struct {
     arrow_type: Arrow_Type,
 }
 
-ARROW_BASE_DAMAGE :: 50.0 // 20
-ARROW_DAMAGE :: 50.0 // 20
+ARROW_BASE_DAMAGE :: 150.0 // 20
+ARROW_DAMAGE :: 150.0 // 20
 ELEMENTAL_ARROW_DAMAGE :: 40.0
 SHOOT_COOLDOWN :: 1.2
 ARROW_SPEED :: 1700.0
@@ -1537,7 +1536,7 @@ update_arrow :: proc(e: ^Entity, dt: f32) {
 
     e.arrow_data.lifetime -= dt
     if e.arrow_data.lifetime <= 0 {
-        entity_destroy(e)
+        entity_destroy(e, f32(dt))
         return
     }
 
@@ -1592,7 +1591,7 @@ update_arrow :: proc(e: ^Entity, dt: f32) {
             }
 
             damage_entity(&target, damage, is_elemental)
-            entity_destroy(e)
+            entity_destroy(e, f32(dt))
             return
         }
     }
@@ -1918,8 +1917,9 @@ entity_create :: proc() -> ^Entity {
 	}
 }
 
-entity_destroy :: proc(entity: ^Entity) {
+entity_destroy :: proc(entity: ^Entity, dt: f32 = 0) {
     if entity.kind == .dummy {
+    gs.upgrades_system.frames_since_last_spawn = 0
         if .ghost_dummy not_in entity.flags {
             for &skill in gs.skills_system.advanced_skills {
                 if skill.is_unlocked && skill.type == .formation_mastery {
@@ -2788,6 +2788,28 @@ has_active_dummy :: proc() -> bool {
     for &en in gs.entities {
         if .allocated in en.flags && en.kind == .dummy {
             active_dummies += 1
+        }
+    }
+
+    if active_dummies < max_dummies && gs.upgrades_system.auto_spawn_unlocked {
+        gs.upgrades_system.frames_since_last_spawn += 1
+        if gs.upgrades_system.frames_since_last_spawn > 60 {
+            for pos in DUMMY_POSITIONS[0:max_dummies] {
+                position_occupied := false
+                for &en in gs.entities {
+                    if .allocated in en.flags && en.kind == .dummy {
+                        if linalg.length(en.pos - pos) < 10 {
+                            position_occupied = true
+                            break
+                        }
+                    }
+                }
+                if !position_occupied {
+                    spawn_dummy(pos)
+                    gs.upgrades_system.frames_since_last_spawn = 0
+                    break
+                }
+            }
         }
     }
 
@@ -4011,8 +4033,15 @@ Upgrades_UI_Config :: struct {
     },
 }
 
+Upgrade_Type :: enum {
+    dummy_training,
+    multiple_dummies,
+    auto_spawn,
+}
+
 Upgrade_Entry :: struct {
     name: string,
+    type: Upgrade_Type,
     current_tier: ^int,
     max_tier: int,
     tier_costs: []int,
@@ -4053,6 +4082,7 @@ render_upgrades_menu :: proc() {
     upgrades := [dynamic]Upgrade_Entry{
         {
             name = "Dummy Training",
+            type = .dummy_training,
             current_tier = &gs.upgrades_system.current_tier,
             max_tier = len(gs.upgrades_system.dummy_tiers) - 1,
             tier_costs = []int{0, 1000, 5000, 25000},
@@ -4060,9 +4090,18 @@ render_upgrades_menu :: proc() {
         },
         {
             name = "Multiple Dummies",
+            type = .multiple_dummies,
             current_tier = &gs.upgrades_system.current_multiple_tier,
             max_tier = len(gs.upgrades_system.multiple_dummy_tiers) - 1,
             tier_costs = []int{0, 2000, 10000},
+            unlocked = true,
+        },
+        {
+            name = "Auto Spawn",
+            type = .auto_spawn,
+            current_tier = cast(^int)&gs.upgrades_system.auto_spawn_unlocked,
+            max_tier = 1,
+            tier_costs = []int{0, 10000},
             unlocked = true,
         },
     }
@@ -4113,11 +4152,24 @@ render_upgrades_menu :: proc() {
                 z_layer = .ui,
             )
 
-            if hover && can_afford && key_just_pressed(.LEFT_MOUSE) {
+        if hover && can_afford && key_just_pressed(.LEFT_MOUSE) {
                 if upgrade.name == "Dummy Training" {
                     unlock_dummy_tier(next_tier)
                 } else if upgrade.name == "Multiple Dummies" {
                     unlock_multiple_dummy_tier(next_tier)
+                } else if upgrade.name == "Auto Spawn" {
+                    gs.upgrades_system.auto_spawn_unlocked = true
+                    gs.skills_system.gold -= upgrade.tier_costs[1]
+
+                    add_floating_text_params(
+                        v2{-200, 150},
+                        "Auto Spawn Unlocked!",
+                        v4{1, 0.8, 0, 1},
+                        scale = 0.8,
+                        target_scale = 1.0,
+                        lifetime = 1.0,
+                        velocity = v2{0, 75},
+                    )
                 }
             }
         } else {
@@ -4185,6 +4237,8 @@ Upgrades_System :: struct {
     current_tier: int,
     multiple_dummy_tiers: [3]Multiple_Dummy_Tier,
     current_multiple_tier: int,
+    auto_spawn_unlocked: bool,
+    frames_since_last_spawn: f32,
 }
 
 Dummy_Tier :: struct {
@@ -4206,7 +4260,9 @@ Multiple_Dummy_Tier :: struct {
 init_upgrades_system :: proc() -> Upgrades_System {
     system := Upgrades_System{
         current_tier = 0,
-        current_multiple_tier = 0
+        current_multiple_tier = 0,
+        auto_spawn_unlocked = false,
+        frames_since_last_spawn = 0,
     }
 
     dummy_training_grounds_init(&system)
@@ -4488,7 +4544,7 @@ init_skills_system :: proc() -> Skills_System {
         active_skill = nil,
         dummies_killed = 0,
         is_unlocked = false,
-        gold = 10000,
+        gold = 100000,
         menu_open = false,
         active_menu = .normal,
         passive_xp_timer = 0,
