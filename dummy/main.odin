@@ -65,6 +65,9 @@ init :: proc "c" () {
 
 	init_images()
 	init_fonts()
+	init_sound()
+
+	play_sound("beat")
 
 	// :init
 	gs = &app_state.game
@@ -74,6 +77,7 @@ init :: proc "c" () {
     gs.skills_system = init_skills_system()
     gs.quests_system = init_quests_system()
     gs.upgrades_system = init_upgrades_system()
+    gs.menu = init_menu()
 
     for &e, kind in entity_data {
         setup_entity(&e, kind)
@@ -659,7 +663,8 @@ Image_Id :: enum {
     back_focus,
     front_focus,
     bar,
-    upgrades_button
+    upgrades_button,
+    title,
 }
 
 Image :: struct {
@@ -984,6 +989,7 @@ Game_State :: struct {
         skills_scroll_initialized: bool,
     },
     upgrades_menu_open: bool,
+    menu: Game_Menu,
 }
 gs: ^Game_State
 
@@ -1005,52 +1011,52 @@ update :: proc() {
 
 	dt := sapp.frame_duration()
 
-    focus_mode_skill_update(f32(dt))
-
-	if gs.ticks == 0 {
-	    // CREATE PLAYER
-		en := entity_create()
-		setup_player(en)
-		gs.player_handle = entity_to_handle(en^)
-	}
-
     width := sapp.width()
     height := sapp.height()
     update_projection(int(width), int(height))
 
-	for &en in gs.entities {
-		en.frame = {}
-	}
+	update_menu(&gs.menu)
 
-	player := get_player()
+	if gs.menu.state == .game {
+        focus_mode_skill_update(f32(dt))
 
-	update_passive_skill_xp(f32(dt))
+    	for &en in gs.entities {
+    		en.frame = {}
+    	}
 
-    // UPDATE ENTITIES
-	for &en in gs.entities {
-        if .allocated in en.flags {
-            #partial switch en.kind {
-                case .player: update_player(&en, f32(dt))
-                case .arrow: update_arrow(&en, f32(dt))
-                case .dummy: {
-                    update_current_animation(&en.animations, f32(dt))
-                    if .ghost_dummy in en.flags {
-                        en.ghost_timer -= f32(dt)
-                        if en.ghost_timer <= 0 {
-                            entity_destroy(&en, f32(dt))
+        player := get_player()
+
+	    update_passive_skill_xp(f32(dt))
+
+        // UPDATE ENTITIES
+    	for &en in gs.entities {
+            if .allocated in en.flags {
+                #partial switch en.kind {
+                    case .player: update_player(&en, f32(dt))
+                    case .arrow: update_arrow(&en, f32(dt))
+                    case .dummy: {
+                        update_current_animation(&en.animations, f32(dt))
+                        if .ghost_dummy in en.flags {
+                            en.ghost_timer -= f32(dt)
+                            if en.ghost_timer <= 0 {
+                                entity_destroy(&en, f32(dt))
+                            }
                         }
                     }
                 }
             }
-        }
-	}
+    	}
+
+    	check_spawn_button()
+    	update_quests_system(&gs.quests_system, f32(dt))
+        update_floating_texts(f32(dt))
+    }
+
+    update_sound()
 
     check_and_reload(&gs.ui_hot_reload)
     gs.ui_config = gs.ui_hot_reload.config
 
-	check_spawn_button()
-	update_quests_system(&gs.quests_system, f32(dt))
-    update_floating_texts(f32(dt))
 	update_ui_state(gs, f32(dt))
 
 	gs.ticks += 1
@@ -1059,105 +1065,125 @@ update :: proc() {
 render :: proc() {
 	using linalg
 
+    width := sapp.width()
+    height := sapp.height()
+    proj := matrix_ortho3d_f32(
+        game_res_w * -0.5,
+        game_res_w * 0.5,
+        game_res_h * -0.5,
+        game_res_h * 0.5,
+        -1,
+        1,
+    )
+    coord := Coord_Space{
+        proj = proj,
+        camera = Matrix4(1),
+    }
+    set_coord_space(coord)
+
     draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.background, z_layer = .background)
     draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.midground, z_layer = .midground)
     draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.foreground, z_layer = .foreground)
 
-    if !has_active_dummy() {
-        cfg := gs.ui_config.spawner
+	render_menu(&gs.menu)
 
-        button_pos := v2{cfg.pos_x, cfg.pos_y}
-        button_size := v2{cfg.size_x, cfg.size_y}
-        button_bounds := v2{cfg.bounds_x, cfg.bounds_y}
-        hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, button_bounds)
+	if gs.menu.state == .game {
+       if !has_active_dummy() {
+            cfg := gs.ui_config.spawner
 
-        draw_sprite_with_size(
-            button_pos,
-            button_size,
-            img_id = !hover ? Image_Id.next_skill_button_bg : Image_Id.next_skill_button_active_bg,
-            pivot = .center_center,
-            z_layer = .ui,
-        )
+            button_pos := v2{cfg.pos_x, cfg.pos_y}
+            button_size := v2{cfg.size_x, cfg.size_y}
+            button_bounds := v2{cfg.bounds_x, cfg.bounds_y}
+            hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, button_bounds)
 
-        text_pos := v2{cfg.txt_pos_x, cfg.txt_pos_y}
-        draw_text(text_pos, "Spawn Dummy", scale = 1.0, z_layer = .ui)
-    }
+            draw_sprite_with_size(
+                button_pos,
+                button_size,
+                img_id = !hover ? Image_Id.next_skill_button_bg : Image_Id.next_skill_button_active_bg,
+                pivot = .center_center,
+                z_layer = .ui,
+            )
 
-	for &en in gs.entities {
-		if .allocated in en.flags {
-			#partial switch en.kind {
-				case .player: {
-				    draw_player_at_pos(&en, v2{-435, -315})
-				}
-				case .dummy: {
-				    draw_dummy_at_pos(&en)
-				}
-				case .arrow: {
-				    draw_arrow_at_pos(&en)
-				}
-			}
-		}
-	}
+            text_pos := v2{cfg.txt_pos_x, cfg.txt_pos_y}
+            draw_text(text_pos, "Spawn Dummy", scale = 1.0, z_layer = .ui)
+        }
 
-    render_floating_texts()
+    	for &en in gs.entities {
+    		if .allocated in en.flags {
+    			#partial switch en.kind {
+    				case .player: {
+    				    draw_player_at_pos(&en, v2{-435, -315})
+    				}
+    				case .dummy: {
+    				    draw_dummy_at_pos(&en)
+    				}
+    				case .arrow: {
+    				    draw_arrow_at_pos(&en)
+    				}
+    			}
+    		}
+    	}
 
-    if gs.skills_system.is_unlocked {
-        focus_mode_skill_render()
-        render_skill_menu_button()
+        render_floating_texts()
 
-        has_upgrades_unlocked := false
-        for &skill in gs.skills_system.skills {
-            if skill.is_unlocked && skill.type == .strength_boost {
-                if skill.level >= 2 {
-                    has_upgrades_unlocked = true
-                    render_upgrades_menu_button()
+        if gs.skills_system.is_unlocked {
+            focus_mode_skill_render()
+            render_skill_menu_button()
+
+            has_upgrades_unlocked := false
+            for &skill in gs.skills_system.skills {
+                if skill.is_unlocked && skill.type == .strength_boost {
+                    if skill.level >= 2 {
+                        has_upgrades_unlocked = true
+                        render_upgrades_menu_button()
+                    }
+                    break
                 }
-                break
             }
+
+            draw_sprite(
+                pos = v2{0,310},
+                img_id = .bar,
+                pivot = .center_center,
+                z_layer = .ui,
+            )
+
+            if has_unlocked_quests(&gs.quests_system) {
+                render_quest_menu_button()
+            }
+
+            if gs.skills_system.menu_open {
+                render_skills_ui()
+            } else if gs.quests_system.menu_open && has_unlocked_quests(&gs.quests_system) {
+                render_quests_ui()
+            } else if gs.upgrades_menu_open && has_upgrades_unlocked {
+                render_upgrades_menu()
+            }
+
+            cfg := gs.ui_config.gold_display
+            pos := v2{cfg.pos_x, cfg.pos_y}
+
+            sprite_pos := v2{cfg.sprite_pos_x, cfg.sprite_pos_y}
+            sprite_size := v2{cfg.sprite_size_x, cfg.sprite_size_y}
+
+            draw_nores_sprite_with_size(
+                sprite_pos,
+                sprite_size,
+                cfg.sprite,
+                pivot = .center_center,
+                z_layer = .ui,
+            )
+
+            text_pos := pos + v2{cfg.text_offset_x, cfg.text_offset_y}
+            draw_text(
+                text_pos,
+                fmt.tprintf("%d Gold", gs.skills_system.gold),
+                col = v4{0,0,0,1},
+                scale = auto_cast cfg.text_scale,
+                z_layer = .ui,
+            )
         }
-
-        draw_sprite(
-            pos = v2{0,310},
-            img_id = .bar,
-            pivot = .center_center,
-            z_layer = .ui,
-        )
-
-        if has_unlocked_quests(&gs.quests_system) {
-            render_quest_menu_button()
-        }
-
-        if gs.skills_system.menu_open {
-            render_skills_ui()
-        } else if gs.quests_system.menu_open && has_unlocked_quests(&gs.quests_system) {
-            render_quests_ui()
-        } else if gs.upgrades_menu_open && has_upgrades_unlocked {
-            render_upgrades_menu()
-        }
-
-        cfg := gs.ui_config.gold_display
-        pos := v2{cfg.pos_x, cfg.pos_y}
-
-        sprite_pos := v2{cfg.sprite_pos_x, cfg.sprite_pos_y}
-        sprite_size := v2{cfg.sprite_size_x, cfg.sprite_size_y}
-
-        draw_nores_sprite_with_size(
-            sprite_pos,
-            sprite_size,
-            cfg.sprite,
-            pivot = .center_center,
-            z_layer = .ui,
-        )
-
-        text_pos := pos + v2{cfg.text_offset_x, cfg.text_offset_y}
-        draw_text(
-            text_pos,
-            fmt.tprintf("%d Gold", gs.skills_system.gold),
-            col = v4{0,0,0,1},
-            scale = auto_cast cfg.text_scale,
-            z_layer = .ui,
-        )
-    }
+	}
 
 	gs.ticks += 1
 }
@@ -1240,6 +1266,7 @@ focus_mode_skill_render :: proc() {
 
         mouse_pos := mouse_pos_in_world_space()
         if is_point_in_rect(mouse_pos, button_pos, button_bounds) && key_just_pressed(.LEFT_MOUSE) {
+            play_sound("button_click")
             gs.skills_system.focus_mode_active = true
 
             base_duration := FOCUS_MODE_DURATION
@@ -2596,7 +2623,8 @@ UI_Config :: struct {
         txt_pos_x: f32,
         txt_pos_y: f32,
         sprite: Image_Id,
-    }
+    },
+    menu: Menu_Config,
 }
 
 UI_Hot_Reload :: struct {
@@ -2677,6 +2705,7 @@ update_ui_state :: proc(gs: ^Game_State, dt: f32) {
     button_pos := get_skill_button_pos()
     if is_point_in_rect(mouse_pos, button_pos, UI.SKILL_BUTTON_SIZE) {
         if key_just_pressed(.LEFT_MOUSE) {
+            play_sound("button_click")
             gs.skills_system.menu_open = !gs.skills_system.menu_open
             if gs.skills_system.menu_open {
                 gs.quests_system.menu_open = false
@@ -2692,6 +2721,7 @@ update_ui_state :: proc(gs: ^Game_State, dt: f32) {
 
     if is_point_in_rect(mouse_pos, quest_button_pos, UI.SKILL_BUTTON_SIZE) {
         if key_just_pressed(.LEFT_MOUSE) {
+            play_sound("button_click")
             gs.quests_system.menu_open = !gs.quests_system.menu_open
             if gs.quests_system.menu_open {
                 gs.skills_system.menu_open = false
@@ -2707,6 +2737,7 @@ update_ui_state :: proc(gs: ^Game_State, dt: f32) {
 
     if is_point_in_rect(mouse_pos, upgrades_button_pos, UI.SKILL_BUTTON_SIZE) {
         if key_just_pressed(.LEFT_MOUSE) {
+            play_sound("button_click")
             gs.upgrades_menu_open = !gs.upgrades_menu_open
             if gs.upgrades_menu_open {
                 gs.skills_system.menu_open = false
@@ -2837,6 +2868,7 @@ check_spawn_button :: proc() {
     hover := aabb_contains(button_bounds, mouse_pos)
 
     if hover && key_just_pressed(.LEFT_MOUSE) {
+        play_sound("button_click")
         for pos in DUMMY_POSITIONS[0:current_tier.max_dummies] {
             position_occupied := false
             for &en in gs.entities {
@@ -3670,6 +3702,7 @@ render_quests_ui :: proc() {
         )
 
         if hover && key_just_pressed(.LEFT_MOUSE) {
+            play_sound("button_click")
             gs.quests_system.active_menu = gs.quests_system.active_menu == .normal ? .advanced : .normal
         }
     }
@@ -3766,6 +3799,7 @@ render_quest_entry_configured :: proc(quest: ^Quest, pos: Vector2) {
         )
 
         if hover && key_just_pressed(.LEFT_MOUSE) {
+            play_sound("button_click")
             gs.quests_system.active_quest = quest
             gs.quests_system.timer = QUEST_TICK_TIME
             quest.progress = 0
@@ -4165,6 +4199,7 @@ render_upgrades_menu :: proc() {
             )
 
         if hover && can_afford && key_just_pressed(.LEFT_MOUSE) {
+                play_sound("button_click")
                 if upgrade.name == "Dummy Training" {
                     unlock_dummy_tier(next_tier)
                 } else if upgrade.name == "Multiple Dummies" {
@@ -4896,6 +4931,7 @@ render_skills_ui :: proc() {
         )
 
         if hover && key_just_pressed(.LEFT_MOUSE) {
+            play_sound("button_click")
             gs.skills_system.active_menu = gs.skills_system.active_menu == .normal ? .advanced : .normal
         }
     }
@@ -5082,6 +5118,7 @@ draw_unlocked_normal_skills :: proc(start_pos: Vector2, alpha: f32) {
                 draw_skill_tooltip(&gs.skills_system.skills[i])
 
                 if key_just_pressed(.LEFT_MOUSE) {
+                    play_sound("button_click")
                     old_active := gs.skills_system.active_skill
                     gs.skills_system.active_skill = &gs.skills_system.skills[i]
                 }
@@ -5223,6 +5260,7 @@ draw_unlocked_advanced_skills :: proc(start_pos: Vector2, alpha: f32) {
                 draw_skill_tooltip(&gs.skills_system.advanced_skills[i])
 
                 if key_just_pressed(.LEFT_MOUSE) {
+                    play_sound("button_click")
                     old_active := gs.skills_system.active_skill
                     gs.skills_system.active_skill = &gs.skills_system.advanced_skills[i]
                 }
@@ -5421,6 +5459,7 @@ draw_next_skill_panel :: proc(skill: ^Skill, pos: Vector2, alpha: f32) {
     hover := aabb_contains(button_bounds, mouse_pos)
 
     if hover && can_afford && key_just_pressed(.LEFT_MOUSE) {
+        play_sound("button_click")
         unlock_skill(&gs.skills_system, skill)
     }
 
@@ -5461,6 +5500,7 @@ render_skill_entry :: proc(skill: ^Skill, pos: Vector2, system: ^Skills_System) 
             mouse_pos := mouse_pos_in_world_space()
             button_bounds := aabb_make(button_pos, button_size, Pivot.bottom_left)
             if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
+                play_sound("button_click")
                 system.active_skill = skill
             }
         }
@@ -5489,6 +5529,7 @@ render_skill_entry :: proc(skill: ^Skill, pos: Vector2, system: ^Skills_System) 
             mouse_pos := mouse_pos_in_world_space()
             button_bounds := aabb_make(button_pos, button_size, Pivot.bottom_left)
             if aabb_contains(button_bounds, mouse_pos) && key_just_pressed(.LEFT_MOUSE) {
+                play_sound("button_click")
                 unlock_skill(system, skill)
             }
         }
@@ -5860,5 +5901,122 @@ draw_wrapped_text :: proc(pos: Vector2, text: string, bounds: Text_Bounds, col :
     for i := 0; i < len(lines); i += 1 {
         line_pos := pos - v2{0, f32(i) * line_height} - offset
         draw_text(line_pos, lines[i], col = col, scale = auto_cast scale, pivot = pivot, z_layer = z_layer)
+    }
+}
+
+//
+// :menu
+Menu_State :: enum {
+    main_menu,
+    game,
+}
+
+Game_Menu :: struct {
+    state: Menu_State,
+    menu_alpha: f32,
+    title_pos: Vector2,
+    title_scale: f32,
+    start_button: struct {
+        pos: Vector2,
+        size: Vector2,
+        text: string,
+        hover: bool,
+    },
+    title_image: struct {
+        pos: Vector2,
+        size: Vector2,
+        sprite: Image_Id,
+    },
+}
+
+Menu_Config :: struct {
+    state: Menu_State,
+    menu_alpha: f32,
+    title_pos_x: f32,
+    title_pos_y: f32,
+    title_scale: f32,
+    start_button: struct {
+        pos_x: f32,
+        pos_y: f32,
+        size_x: f32,
+        size_y: f32,
+        text: string,
+        bounds_x: f32,
+        bounds_y: f32,
+    },
+    title_image: struct {
+        pos_x: f32,
+        pos_y: f32,
+        size_x: f32,
+        size_y: f32,
+        sprite: Image_Id,
+    },
+}
+
+init_menu :: proc() -> Game_Menu {
+    return Game_Menu{
+        state = .main_menu,
+        menu_alpha = 1.0,
+        start_button = {
+            pos = {0, -50},
+            size = {50, 10},
+            text = "Start Game",
+            hover = false,
+        },
+        title_image = {
+            pos = {0,0},
+            size = {512, 256},
+            sprite = .title,
+        },
+    }
+}
+
+render_menu :: proc(menu: ^Game_Menu) {
+    if menu.state != .main_menu do return
+
+    cfg := gs.ui_hot_reload.config.menu
+    push_z_layer(.ui)
+
+    draw_sprite_with_size(
+        v2{cfg.title_image.pos_x, cfg.title_image.pos_y},
+        v2{cfg.title_image.size_x, cfg.title_image.size_y},
+        img_id = cfg.title_image.sprite,
+        pivot = .center_center,
+        z_layer = .ui,
+    )
+
+    draw_sprite_with_size(
+        v2{cfg.start_button.pos_x, cfg.start_button.pos_y},
+        v2{cfg.start_button.size_x, cfg.start_button.size_y},
+        img_id = !menu.start_button.hover ? .next_skill_button_bg : .next_skill_button_active_bg,
+        pivot = .center_center,
+        z_layer = .ui,
+    )
+
+    draw_text(
+        v2{cfg.start_button.pos_x, cfg.start_button.pos_y},
+        cfg.start_button.text,
+        scale = auto_cast cfg.title_scale,
+        pivot = .center_center,
+        z_layer = .ui,
+    )
+}
+
+update_menu :: proc(menu: ^Game_Menu) {
+    if menu.state == .main_menu {
+        cfg := gs.ui_hot_reload.config.menu
+        mouse_pos := mouse_pos_in_world_space()
+        button_pos := v2{cfg.start_button.pos_x, cfg.start_button.pos_y}
+        button_bounds := v2{cfg.start_button.bounds_x, cfg.start_button.bounds_y}
+        bounds := aabb_make(button_pos, button_bounds, Pivot.center_center)
+        menu.start_button.hover = aabb_contains(bounds, mouse_pos)
+
+        if menu.start_button.hover && key_just_pressed(.LEFT_MOUSE) {
+            play_sound("button_click")
+            menu.state = .game
+            en := entity_create()
+            setup_player(en)
+            gs.player_handle = entity_to_handle(en^)
+        }
     }
 }
