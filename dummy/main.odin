@@ -30,6 +30,7 @@ app_state: struct {
 	bind: sg.Bindings,
 	game: Game_State,
 	input_state: Input_State,
+    last_frame_time: time.Time
 }
 
 window_w :: 1280
@@ -173,10 +174,17 @@ frame :: proc "c" () {
 
 	draw_frame.reset = {}
 
-	update()
-	render()
+	current_time := time.now()
+	if app_state.last_frame_time._nsec == 0{
+	   app_state.last_frame_time = current_time
+	}
 
-	dt := sapp.frame_duration()
+	frame_duration := time.diff(app_state.last_frame_time, current_time)
+	app_state.last_frame_time = current_time
+	dt := time.duration_seconds(frame_duration)
+
+	update(dt)
+	render()
 
 	app_state.bind.images[IMG_tex0] = atlas.sg_image
 	app_state.bind.images[IMG_tex1] = images[font.img_id].sg_img
@@ -1017,15 +1025,14 @@ get_player :: proc() -> ^Entity {
 }
 
 get_delta_time :: proc() -> f64 {
-	return sapp.frame_duration()
+    return time.duration_seconds(time.diff(app_state.last_frame_time, time.now()))
 }
 
 game_res_w :: 1280
 game_res_h :: 720
 
-update :: proc() {
+update :: proc(dt: f64) {
 	using linalg
-	dt := sapp.frame_duration()
 
     #partial switch gs.state_kind {
         case .splash: {
