@@ -67,7 +67,9 @@ init :: proc "c" () {
 	init_fonts()
 	init_sound()
 
-	play_sound("beat")
+	if !ODIN_DEBUG {
+		play_sound("beat")
+	}
 
 	// :init
 	gs = &app_state.game
@@ -997,6 +999,7 @@ Game_State :: struct {
     menu: Game_Menu,
     splash_state: Splash_State,
     state_kind: Game_State_Kind,
+    tutorial_system: Tutorial_System,
 }
 gs: ^Game_State
 
@@ -1111,6 +1114,7 @@ render :: proc() {
             draw_rect_aabb(v2{ game_res_w * -0.5, game_res_h * -0.5}, v2{game_res_w, game_res_h}, img_id=.foreground, z_layer = .foreground)
 
         	render_menu(&gs.menu)
+        	render_tutorial_box(&gs.tutorial_system)
 
         	if gs.menu.state == .game {
                if !has_active_dummy() {
@@ -2657,6 +2661,7 @@ UI_Config :: struct {
         sprite: Image_Id,
     },
     menu: Menu_Config,
+    tutorial: Tutorial_Box_Config,
 }
 
 UI_Hot_Reload :: struct {
@@ -5986,6 +5991,8 @@ Menu_Config :: struct {
 }
 
 init_menu :: proc() -> Game_Menu {
+	gs.tutorial_system = init_tutorial_system()
+
 	return Game_Menu{
 		state = .main_menu,
 		menu_alpha = 1.0,
@@ -6049,6 +6056,9 @@ update_menu :: proc(menu: ^Game_Menu) {
             en := entity_create()
             setup_player(en)
             gs.player_handle = entity_to_handle(en^)
+
+            show_tutorial_box(&gs.tutorial_system,
+                "Press the button to spawn a Dummy.")
         }
     }
 }
@@ -6118,4 +6128,129 @@ draw_splash_screen :: proc(gs: ^Game_State) {
           v2{game_res_w, game_res_h},
           col = color,
           img_id = splash_image)
+}
+
+//
+// :tutorial
+Tutorial_Box_Config :: struct {
+    pos_x: f32,
+    pos_y: f32,
+    size_x: f32,
+    size_y: f32,
+    background_sprite: Image_Id,
+    button: struct {
+        offset_x: f32,
+        offset_y: f32,
+        size_x: f32,
+        size_y: f32,
+        bounds_x: f32,
+        bounds_y: f32,
+        text_scale: f32,
+        sprite: Image_Id,
+    },
+    text: struct {
+        offset_x: f32,
+        offset_y: f32,
+        scale: f32,
+        bounds_width: f32,
+        bounds_height: f32,
+    },
+}
+
+Tutorial_Box :: struct {
+    text: string,
+    is_active: bool,
+}
+
+Tutorial_System :: struct {
+    current_box: Tutorial_Box,
+}
+
+init_tutorial_system :: proc() -> Tutorial_System {
+    return Tutorial_System {
+        current_box = Tutorial_Box{},
+    }
+}
+
+show_tutorial_box :: proc(system: ^Tutorial_System, text: string) {
+    if system.current_box.is_active {
+        delete(system.current_box.text)
+    }
+
+    system.current_box = Tutorial_Box{
+        text = strings.clone(text),
+        is_active = true,
+    }
+}
+
+hide_tutorial_box :: proc(system: ^Tutorial_System) {
+    delete(system.current_box.text)
+    system.current_box = Tutorial_Box{}
+}
+
+render_tutorial_box :: proc(system: ^Tutorial_System) {
+    if !system.current_box.is_active do return
+
+    cfg := gs.ui_config.tutorial
+    push_z_layer(.ui)
+
+    pos := v2{cfg.pos_x, cfg.pos_y}
+    size := v2{cfg.size_x, cfg.size_y}
+
+    /*draw_nores_sprite_with_size(
+        pos,
+        size,
+        cfg.background_sprite,
+        pivot = .center_center,
+        z_layer = .ui,
+    )*/
+
+    draw_sprite_1024(
+        pos,
+        size,
+        cfg.background_sprite,
+        pivot = .center_center,
+        z_layer = .ui,
+    )
+
+    text_pos := pos + v2{cfg.text.offset_x, cfg.text.offset_y}
+    bounds := Text_Bounds {
+        cfg.text.bounds_width,
+        cfg.text.bounds_height,
+    }
+
+    draw_wrapped_text(
+        text_pos,
+        system.current_box.text,
+        bounds,
+        scale = cfg.text.scale,
+        pivot = .center_left,
+        z_layer = .ui,
+    )
+
+    button_pos := pos + v2{cfg.button.offset_x, cfg.button.offset_y}
+    button_size := v2{cfg.button.size_x, cfg.button.size_y}
+    btn_bounds := v2{cfg.button.bounds_x, cfg.button.bounds_y}
+    hover := is_point_in_rect(mouse_pos_in_world_space(), button_pos, btn_bounds)
+
+    draw_sprite_with_size(
+        button_pos,
+        button_size,
+        img_id = !hover ? Image_Id.next_skill_button_bg : Image_Id.next_skill_button_active_bg,
+        pivot = .center_center,
+        z_layer = .ui,
+    )
+
+    draw_text(
+        button_pos,
+        "OK!",
+        scale = auto_cast cfg.button.text_scale,
+        pivot = .center_center,
+        z_layer = .ui,
+    )
+
+    if hover && key_just_pressed(.LEFT_MOUSE) {
+        play_sound("button_click")
+        hide_tutorial_box(system)
+    }
 }

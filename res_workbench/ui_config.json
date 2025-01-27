@@ -13,7 +13,7 @@
       "size_y": 8,
       "sprite": "skills_button"
     },
-    "switch_button":{
+    "switch_button": {
       "offset_x": 180.0,
       "offset_y": -220.0,
       "size_x": 30.0,
@@ -23,22 +23,22 @@
       "text_scale": 1.0,
       "sprite": "next_skill_button_bg",
     },
-    "focus_mode":{
-        "button_pos_x": 0.0,
-        "button_pos_y": -10.0,
-        "button_size_x": 32.0,
-        "button_size_y": 12.0,
-        "button_bounds_x": 130.0,
-        "button_bounds_y": 45.0,
-        "glow_size_x": 100.0,
-        "glow_size_y": 100.0,
-        "back_sprite": "back_focus",
-        "front_sprite": "front_focus",
-        "text_scale": 1.2,
-        "text_pos_x": 0.0,
-        "text_pos_y": 0.0,
-        "focus_text_pos_x": 0.0,
-        "focus_text_pos_y": 0.0,
+    "focus_mode": {
+      "button_pos_x": 0.0,
+      "button_pos_y": -10.0,
+      "button_size_x": 32.0,
+      "button_size_y": 12.0,
+      "button_bounds_x": 130.0,
+      "button_bounds_y": 45.0,
+      "glow_size_x": 100.0,
+      "glow_size_y": 100.0,
+      "back_sprite": "back_focus",
+      "front_sprite": "front_focus",
+      "text_scale": 1.2,
+      "text_pos_x": 0.0,
+      "text_pos_y": 0.0,
+      "focus_text_pos_x": 0.0,
+      "focus_text_pos_y": 0.0,
     },
     "next_skill": {
       "offset_x": -400,
@@ -60,7 +60,7 @@
       "button_offset_x": 70,
       "button_offset_y": -40,
       "button_size_x": 25,
-      "button_size_y": 8
+      "button_size_y": 8,
       "button_bnds_x": 100,
       "button_bnds_y": 30,
     },
@@ -88,13 +88,12 @@
         "offset_y": 0,
         "scale": 1.4
       },
-      "xp_bar":{
+      "xp_bar": {
         "bar_width": 200.0,
         "bar_height": 5.0,
         "bar_pos_x": 225,
         "bar_pos_y": -30.0,
-        "bar_sprite": "skill_xp_bar"
-        "zlayer_xp": "xp_bars",
+        "bar_sprite": "skill_xp_bar""zlayer_xp": "xp_bars",
         "zlayer_xp_2": "ui",
         "fill_speed": 0.6,
         "rect_width": 390,
@@ -115,10 +114,7 @@
       "text_pos_y": 160.0,
     },
   },
-
-
-
-    "quests": {
+  "quests": {
     "menu": {
       "pos_x": 0,
       "pos_y": 30,
@@ -133,29 +129,29 @@
       "size_y": 8,
       "sprite": "quests_button"
     },
-    "next_quest":{
-        "offset_x": -400.0,
-        "offset_y": 190.0,
-        "panel_size_x": 320.0,
-        "panel_size_y": 100.0,
-        "title_offset_x": -120.0,
-        "title_offset_y": 45.0,
-        "name_offset_x": -120.0,
-        "name_offset_y": 25.0,
-        "desc_offset_x": -120.0,
-        "desc_offset_y": 15.0,
-        "level_req_offset_x": -120.0,
-        "level_req_offset_y": -50.0,
+    "next_quest": {
+      "offset_x": -400.0,
+      "offset_y": 190.0,
+      "panel_size_x": 320.0,
+      "panel_size_y": 100.0,
+      "title_offset_x": -120.0,
+      "title_offset_y": 45.0,
+      "name_offset_x": -120.0,
+      "name_offset_y": 25.0,
+      "desc_offset_x": -120.0,
+      "desc_offset_y": 15.0,
+      "level_req_offset_x": -120.0,
+      "level_req_offset_y": -50.0,
     },
-    "switch_button":{
-        "offset_x": 180.0,
-        "offset_y": -220.0,
-        "size_x": 30.0,
-        "size_y": 8.0,
-        "bounds_x": 120.0,
-        "bounds_y": 32.0,
-        "text_scale": 1.0,
-        "sprite": "next_skill_button_bg",
+    "switch_button": {
+      "offset_x": 180.0,
+      "offset_y": -220.0,
+      "size_x": 30.0,
+      "size_y": 8.0,
+      "bounds_x": 120.0,
+      "bounds_y": 32.0,
+      "text_scale": 1.0,
+      "sprite": "next_skill_button_bg",
     },
     "quest_entry": {
       "start_offset_x": -100,
@@ -180,7 +176,7 @@
         "bounds_x": 80.0,
         "bounds_y": 30.0,
       },
-      "xp_bar":{
+      "xp_bar": {
         "text_pos_x": 0.0,
         "text_pos_y": 0.0,
         "text_scale": 1.0,
@@ -199,39 +195,37 @@
       }
     }
   },
-
   "upgrades": {
-        "menu": {
-            "pos_x": 0,
-            "pos_y": 30,
-            "size_x": 512,
-            "size_y": 512,
-            "background_sprite": "skills_panel_bg"
-        },
-        "button": {
-            "pos_x": -40,
-            "pos_y": 310,
-            "size_x": 8,
-            "size_y": 8,
-            "sprite": "upgrades_button"
-        },
-        "list": {
-            "start_x": -200,
-            "start_y": 200,
-            "item_height": 40,
-            "spacing": 20,
-            "title_offset_x": 10,
-            "button_offset_x": 400,
-            "button_width": 20,
-            "button_height": 5,
-            "bound_x": 80,
-            "bound_y": 20,
-        }
+    "menu": {
+      "pos_x": 0,
+      "pos_y": 30,
+      "size_x": 512,
+      "size_y": 512,
+      "background_sprite": "skills_panel_bg"
     },
-
+    "button": {
+      "pos_x": -40,
+      "pos_y": 310,
+      "size_x": 8,
+      "size_y": 8,
+      "sprite": "upgrades_button"
+    },
+    "list": {
+      "start_x": -200,
+      "start_y": 200,
+      "item_height": 40,
+      "spacing": 20,
+      "title_offset_x": 10,
+      "button_offset_x": 400,
+      "button_width": 20,
+      "button_height": 5,
+      "bound_x": 80,
+      "bound_y": 20,
+    }
+  },
   "gold_display": {
     "pos_x": -600,
-    "pos_y": 252
+    "pos_y": 252,
     "icon_size": 24,
     "text_offset_x": 20,
     "text_offset_y": 60,
@@ -241,11 +235,8 @@
     "sprite_size_x": 40,
     "sprite_size_y": 40,
     "sprite": "coin",
-    },
-
-
-
-  "spawner":{
+  },
+  "spawner": {
     "pos_x": 0,
     "pos_y": -200,
     "size_x": 30,
@@ -255,7 +246,31 @@
     "txt_pos_x": -52,
     "txt_pos_y": -205,
     "sprite": "next_skill_button_bg",
+  },
+  "tutorial": {
+    "pos_x": 0.0,
+    "pos_y": -100.0,
+    "size_x": 65.0,
+    "size_y": 30.0,
+    "background_sprite": "next_skill_panel_bg",
+    "button": {
+      "offset_x": 95.0,
+      "offset_y": -40.0,
+      "size_x": 10.0,
+      "size_y": 6.0,
+      "bounds_x": 40.0,
+      "bounds_y": 30.0,
+      "text_scale": 0.8,
+      "sprite": "next_skill_button_bg",
     },
+    "text": {
+      "offset_x": -105.0,
+      "offset_y": 50.0,
+      "scale": 1.0,
+      "bounds_width": 250.0,
+      "bounds_height": 120.0,
+    },
+  },
 
   "menu": {
     "state": "main_menu",
@@ -279,5 +294,5 @@
       "size_y": 1280.0,
       "sprite": "title"
     }
-  }
+  },
 }
