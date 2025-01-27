@@ -1024,7 +1024,7 @@ update :: proc() {
 
     #partial switch gs.state_kind {
         case .splash: {
-            update_splash_screen(gs, dt)
+			update_splash_screen(gs, dt)
         }
 
         case .game: {
@@ -1102,7 +1102,7 @@ render :: proc() {
 
     #partial switch gs.state_kind {
         case .splash: {
-            draw_splash_screen(gs)
+			draw_splash_screen(gs)
         }
 
         case .game: {
@@ -1332,16 +1332,16 @@ focus_mode_skill_render :: proc() {
 
 draw_player_at_pos :: proc(en: ^Entity, pos: Vector2) {
     xform := Matrix4(1)
-    xform *= xform_scale(v2{0.38, 0.38})
+    xform *= xform_scale(v2{0.16, 0.16})
     draw_sprite(pos, .player, pivot = .bottom_center, xform=xform, z_layer=.player)
 
-    bow_offset := v2{2, 25}
+    bow_offset := v2{0, 20}
     bow_pos := pos + bow_offset
 
     bow_xform := Matrix4(1)
     bow_xform *= xform_translate(bow_pos)
     bow_xform *= xform_rotate(en.bow_angle)
-    bow_xform *= xform_scale(v2{0.2, 0.2})
+    bow_xform *= xform_scale(v2{0.13, 0.13})
 
     draw_sprite(v2{0,0}, .bow, pivot = .center_left, xform = bow_xform, z_layer = .bow)
 }
@@ -5986,21 +5986,21 @@ Menu_Config :: struct {
 }
 
 init_menu :: proc() -> Game_Menu {
-    return Game_Menu{
-        state = .main_menu,
-        menu_alpha = 1.0,
-        start_button = {
-            pos = {0, -50},
-            size = {50, 10},
-            text = "Start Game",
-            hover = false,
-        },
-        title_image = {
-            pos = {0,0},
-            size = {512, 256},
-            sprite = .title,
-        },
-    }
+	return Game_Menu{
+		state = .main_menu,
+		menu_alpha = 1.0,
+		start_button = {
+			pos = {0, -50},
+			size = {50, 10},
+			text = "Start Game",
+			hover = false,
+		},
+		title_image = {
+			pos = {0,0},
+			size = {512, 256},
+			sprite = .title,
+		},
+	}
 }
 
 render_menu :: proc(menu: ^Game_Menu) {
@@ -6071,7 +6071,11 @@ init_splash_state :: proc(gs: ^Game_State){
         alpha = 0,
     }
 
-    gs.state_kind = .splash
+	if !ODIN_DEBUG {
+    	gs.state_kind = .splash
+	}else{
+		gs.state_kind = .game
+	}
 }
 
 update_splash_screen :: proc(gs: ^Game_State, delta_t: f64) {
