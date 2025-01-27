@@ -83,6 +83,7 @@ init :: proc "c" () {
     gs.upgrades_system = init_upgrades_system()
     gs.menu = init_menu()
 
+    gs.dummies_killed = 0
 
     for &e, kind in entity_data {
         setup_entity(&e, kind)
@@ -1000,6 +1001,7 @@ Game_State :: struct {
     splash_state: Splash_State,
     state_kind: Game_State_Kind,
     tutorial_system: Tutorial_System,
+    dummies_killed: f32,
 }
 gs: ^Game_State
 
@@ -1982,6 +1984,15 @@ entity_create :: proc() -> ^Entity {
 
 entity_destroy :: proc(entity: ^Entity, dt: f32 = 0) {
     if entity.kind == .dummy {
+    gs.dummies_killed += 1
+
+    if gs.dummies_killed == 1{
+        show_tutorial_box(&gs.tutorial_system,  "Destroy dummies to gain XP.")
+    }else if gs.dummies_killed == 3 {
+        start_tutorial_sequence(&gs.tutorial_system, "skills_unlock",
+            "You have unlocked the Skills system.","Open the menu to select which Skill you want to use.")
+    }
+
     gs.upgrades_system.frames_since_last_spawn = 0
         if .ghost_dummy not_in entity.flags {
             for &skill in gs.skills_system.advanced_skills {
@@ -6057,8 +6068,8 @@ update_menu :: proc(menu: ^Game_Menu) {
             setup_player(en)
             gs.player_handle = entity_to_handle(en^)
 
-            show_tutorial_box(&gs.tutorial_system,
-                "Press the button to spawn a Dummy.")
+            show_tutorial_box(&gs.tutorial_system,  "Press the spawn dummy button to spawn a Dummy.")
+            //start_tutorial_sequence(&gs.tutorial_system, "game_start", "Press the spawn dummy button to spawn a Dummy.","Destroy dummies to gain XP.")
         }
     }
 }
@@ -6164,11 +6175,21 @@ Tutorial_Box :: struct {
 
 Tutorial_System :: struct {
     current_box: Tutorial_Box,
+    message_queue: [dynamic]Tutorial_Message,
+    shown_messages: map[string]bool,
+    active_sequence: string,
+}
+
+Tutorial_Message :: struct {
+    text: string,
+    id: string,
 }
 
 init_tutorial_system :: proc() -> Tutorial_System {
     return Tutorial_System {
         current_box = Tutorial_Box{},
+        message_queue = make([dynamic]Tutorial_Message),
+        shown_messages = make(map[string]bool),
     }
 }
 
@@ -6186,6 +6207,7 @@ show_tutorial_box :: proc(system: ^Tutorial_System, text: string) {
 hide_tutorial_box :: proc(system: ^Tutorial_System) {
     delete(system.current_box.text)
     system.current_box = Tutorial_Box{}
+    show_next_tutorial_message(system)
 }
 
 render_tutorial_box :: proc(system: ^Tutorial_System) {
@@ -6196,14 +6218,6 @@ render_tutorial_box :: proc(system: ^Tutorial_System) {
 
     pos := v2{cfg.pos_x, cfg.pos_y}
     size := v2{cfg.size_x, cfg.size_y}
-
-    /*draw_nores_sprite_with_size(
-        pos,
-        size,
-        cfg.background_sprite,
-        pivot = .center_center,
-        z_layer = .ui,
-    )*/
 
     draw_sprite_1024(
         pos,
@@ -6252,5 +6266,28 @@ render_tutorial_box :: proc(system: ^Tutorial_System) {
     if hover && key_just_pressed(.LEFT_MOUSE) {
         play_sound("button_click")
         hide_tutorial_box(system)
+    }
+}
+
+start_tutorial_sequence :: proc(system: ^Tutorial_System, sequence_id: string, messages: ..string) {
+    clear(&system.message_queue)
+    system.active_sequence = sequence_id
+
+    for msg, i in messages {
+        msg_id := fmt.tprintf("%s_%d", sequence_id, i)
+        append(&system.message_queue, Tutorial_Message{
+            text = strings.clone(msg),
+            id = msg_id,
+        })
+    }
+
+    show_next_tutorial_message(system)
+}
+
+show_next_tutorial_message :: proc(system: ^Tutorial_System) {
+    if len(system.message_queue) > 0 {
+        next_msg := pop_front(&system.message_queue)
+        system.shown_messages[next_msg.id] = true
+        show_tutorial_box(system, next_msg.text)
     }
 }

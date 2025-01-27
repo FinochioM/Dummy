@@ -264,10 +264,10 @@
       "sprite": "next_skill_button_bg",
     },
     "text": {
-      "offset_x": -105.0,
+      "offset_x": -115.0,
       "offset_y": 50.0,
       "scale": 1.0,
-      "bounds_width": 250.0,
+      "bounds_width": 230.0,
       "bounds_height": 120.0,
     },
   },
