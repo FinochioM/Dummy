@@ -2928,6 +2928,7 @@ check_spawn_button :: proc() {
                 }
             }
             if !position_occupied {
+                hide_tutorial_box(&gs.tutorial_system)
                 spawn_dummy(pos)
                 break
             }
@@ -6068,7 +6069,7 @@ update_menu :: proc(menu: ^Game_Menu) {
             setup_player(en)
             gs.player_handle = entity_to_handle(en^)
 
-            show_tutorial_box(&gs.tutorial_system,  "Press the spawn dummy button to spawn a Dummy.")
+            show_tutorial_box(&gs.tutorial_system, "Press the spawn dummy button to spawn a Dummy.")
             //start_tutorial_sequence(&gs.tutorial_system, "game_start", "Press the spawn dummy button to spawn a Dummy.","Destroy dummies to gain XP.")
         }
     }
