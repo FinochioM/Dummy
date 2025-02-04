@@ -114,3 +114,29 @@ Quest: Study battle reports - Gives gold and has a small change to double the XP
 Leadership -> "Commander's Authority"
 Skill: All unlocked skills gain passive XP over time, increasing by 0.5% per level
 Quest: Lead training exercises - Gives gold and randomly triggers other quests' rewards
+
+IN PROGRESS:
+- Add a small tutorial that explains the basic mechanics.
+
+TO DO:
+
+- Finish "UPGRADES" system by implementing more upgrades.
+
+- Do a complete UI rework.
+
+- Add a new system.
+
+- Work on progression, bugs and feeback that people share.
+
+- Add particle effects.
+
+- Add more sound effects.
+
+- Change player sprite.
+
+- Add more backgrounds/scenes.
+
+- Add small settings menu (sound and music settings, turn off tutorial, etc)
+
+DONE:
+- Add logic for Game Saving.

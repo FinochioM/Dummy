@@ -144,6 +144,7 @@ init :: proc "c" () {
     gs.skills_system = init_skills_system()
     gs.quests_system = init_quests_system()
     gs.upgrades_system = init_upgrades_system()
+
     gs.menu = init_menu()
 
     gs.dummies_killed = 0
@@ -762,6 +763,8 @@ Image_Id :: enum {
     title,
     fmod_logo,
     maki_logo,
+    next_page_btn,
+    previous_page_btn,
 }
 
 Image :: struct {
@@ -1084,6 +1087,10 @@ Game_State :: struct {
         last_mouse_pos: Vector2,
         skills_scroll_pos: f32,
         skills_scroll_initialized: bool,
+        upgrades_current_page: int,
+        skills_button_y_offset: f32,
+        quest_button_y_offset: f32,
+        upgrades_button_y_offset: f32,
     },
     upgrades_menu_open: bool,
     menu: Game_Menu,
@@ -1266,13 +1273,6 @@ render :: proc() {
                             break
                         }
                     }
-
-                    draw_sprite(
-                        pos = v2{0,310},
-                        img_id = .bar,
-                        pivot = .center_center,
-                        z_layer = .ui,
-                    )
 
                     if has_unlocked_quests(&gs.quests_system) {
                         render_quest_menu_button()
@@ -2126,7 +2126,7 @@ entity_destroy :: proc(entity: ^Entity, dt: f32 = 0) {
         check_skills_unlock(&gs.skills_system)
 
         if gs.skills_system.is_unlocked {
-            base_xp := 50
+            base_xp := 60
             if .ghost_dummy in entity.flags {
                 base_xp *= 2
             }
@@ -2845,8 +2845,11 @@ init_ui_state :: proc(gs: ^Game_State) {
 update_ui_state :: proc(gs: ^Game_State, dt: f32) {
     mouse_pos := mouse_pos_in_world_space()
 
-    button_pos := get_skill_button_pos()
+    cfg := gs.ui_config.quests.button
+    button_pos := v2{cfg.pos_x - 40, cfg.pos_y}
+
     if is_point_in_rect(mouse_pos, button_pos, UI.SKILL_BUTTON_SIZE) {
+        animate_to_target_f32(&gs.ui.skills_button_y_offset, -50, dt, UI.HOVER_SCALE_SPEED)
         if key_just_pressed(.LEFT_MOUSE) {
             play_sound("button_click")
             gs.skills_system.menu_open = !gs.skills_system.menu_open
@@ -2856,13 +2859,13 @@ update_ui_state :: proc(gs: ^Game_State, dt: f32) {
             }
         }
     } else {
+        animate_to_target_f32(&gs.ui.skills_button_y_offset, 0, dt, UI.HOVER_SCALE_SPEED)
         animate_to_target_f32(&gs.ui.skills_button_scale, UI.NORMAL_SCALE, dt, UI.HOVER_SCALE_SPEED)
     }
 
-    cfg := gs.ui_config.quests.button
     quest_button_pos := v2{cfg.pos_x, cfg.pos_y}
-
     if is_point_in_rect(mouse_pos, quest_button_pos, UI.SKILL_BUTTON_SIZE) {
+        animate_to_target_f32(&gs.ui.quest_button_y_offset, -50, dt, UI.HOVER_SCALE_SPEED)
         if key_just_pressed(.LEFT_MOUSE) {
             play_sound("button_click")
             gs.quests_system.menu_open = !gs.quests_system.menu_open
@@ -2872,13 +2875,14 @@ update_ui_state :: proc(gs: ^Game_State, dt: f32) {
             }
         }
     } else {
+        animate_to_target_f32(&gs.ui.quest_button_y_offset, 0, dt, UI.HOVER_SCALE_SPEED)
         animate_to_target_f32(&gs.ui.quest_button_scale, UI.NORMAL_SCALE, dt, UI.HOVER_SCALE_SPEED)
     }
 
     cfg_upgrades := gs.ui_config.upgrades.button
     upgrades_button_pos := v2{cfg_upgrades.pos_x, cfg_upgrades.pos_y}
-
     if is_point_in_rect(mouse_pos, upgrades_button_pos, UI.SKILL_BUTTON_SIZE) {
+        animate_to_target_f32(&gs.ui.upgrades_button_y_offset, -50, dt, UI.HOVER_SCALE_SPEED)
         if key_just_pressed(.LEFT_MOUSE) {
             play_sound("button_click")
             gs.upgrades_menu_open = !gs.upgrades_menu_open
@@ -2888,6 +2892,7 @@ update_ui_state :: proc(gs: ^Game_State, dt: f32) {
             }
         }
     } else {
+        animate_to_target_f32(&gs.ui.upgrades_button_y_offset, 0, dt, UI.HOVER_SCALE_SPEED)
         animate_to_target_f32(&gs.ui.upgrades_button_scale, UI.NORMAL_SCALE, dt, UI.HOVER_SCALE_SPEED)
     }
 
@@ -4070,7 +4075,7 @@ render_active_quest_ui :: proc(quest: ^Quest) {
 
 render_quest_menu_button :: proc() {
     cfg := gs.ui_config.quests.button
-    button_pos := v2{cfg.pos_x, cfg.pos_y}
+    button_pos := v2{cfg.pos_x, cfg.pos_y + gs.ui.quest_button_y_offset}
     button_size := v2{cfg.size_x, cfg.size_y} * gs.ui.quest_button_scale
 
     draw_sprite_with_size(
@@ -4221,12 +4226,40 @@ Upgrades_UI_Config :: struct {
         bound_x: f32,
         bound_y: f32,
     },
+    paging: struct {
+        items_per_page: int,
+        prev_btn_pos_x: f32,
+        prev_btn_pos_y: f32,
+        next_btn_pos_x: f32,
+        next_btn_pos_y: f32,
+        btn_size_x: f32,
+        btn_size_y: f32,
+        prev_btn_sprite: Image_Id,
+        next_btn_sprite: Image_Id,
+        prev_btn_hover_sprite: Image_Id,
+        next_btn_hover_sprite: Image_Id,
+    },
 }
 
 Upgrade_Type :: enum {
     dummy_training,
     multiple_dummies,
     auto_spawn,
+
+    //boost
+    experience_boost,
+    strength_boost,
+    speed_boost,
+    critical_boost,
+    storm_arrows_boost,
+    mystic_fletcher_boost,
+    warrior_stamina_boost,
+
+    formation_mastery_boost,
+    battle_meditation_boost,
+    war_preparation_boost,
+    tactical_analysis_boost,
+    commanders_authority_boost,
 }
 
 Upgrade_Entry :: struct {
@@ -4240,7 +4273,7 @@ Upgrade_Entry :: struct {
 
 render_upgrades_menu_button :: proc() {
     cfg := gs.ui_config.upgrades.button
-    button_pos := v2{cfg.pos_x, cfg.pos_y}
+    button_pos := v2{cfg.pos_x, cfg.pos_y + gs.ui.upgrades_button_y_offset}
     button_size := v2{cfg.size_x, cfg.size_y} * gs.ui.upgrades_button_scale
 
     draw_sprite_with_size(
@@ -4261,6 +4294,7 @@ render_upgrades_menu :: proc() {
 
     menu_pos := v2{cfg.menu.pos_x, cfg.menu.pos_y}
     menu_size := v2{cfg.menu.size_x, cfg.menu.size_y}
+
     draw_sprite_with_size(
         menu_pos,
         menu_size,
@@ -4294,13 +4328,158 @@ render_upgrades_menu :: proc() {
             tier_costs = []int{0, 10000},
             unlocked = true,
         },
+        {
+            name = "Experience Amplification",
+            type = .experience_boost,
+            current_tier = &gs.upgrades_system.experience_boost_tier,
+            max_tier = 3,
+            tier_costs = []int{0, 5000, 15000, 30000},
+            unlocked = true,
+        },
+        {
+            name = "Strength Training Regimen",
+            type = .strength_boost,
+            current_tier = &gs.upgrades_system.strength_boost_tier,
+            max_tier = 3,
+            tier_costs = []int{0, 7000, 20000, 40000},
+            unlocked = true,
+        },
+        {
+            name = "Speed Training Program",
+            type = .speed_boost,
+            current_tier = &gs.upgrades_system.speed_boost_tier,
+            max_tier = 3,
+            tier_costs = []int{0, 10000, 25000, 50000},
+            unlocked = true,
+        },
+        {
+            name = "Critical Training Focus",
+            type = .critical_boost,
+            current_tier = &gs.upgrades_system.critical_boost_tier,
+            max_tier = 3,
+            tier_costs = []int{0, 15000, 35000, 70000},
+            unlocked = true,
+        },
+        {
+            name = "Storm Arrows Training",
+            type = .storm_arrows_boost,
+            current_tier = &gs.upgrades_system.storm_arrows_boost_tier,
+            max_tier = 3,
+            tier_costs = []int{0, 20000, 45000, 90000},
+            unlocked = true,
+        },
+        {
+            name = "Mystic Training Enhancement",
+            type = .mystic_fletcher_boost,
+            current_tier = &gs.upgrades_system.mystic_fletcher_boost_tier,
+            max_tier = 3,
+            tier_costs = []int{0, 25000, 55000, 110000},
+            unlocked = true,
+        },
+        {
+            name = "Warrior's Training Path",
+            type = .warrior_stamina_boost,
+            current_tier = &gs.upgrades_system.warrior_stamina_boost_tier,
+            max_tier = 3,
+            tier_costs = []int{0, 30000, 65000, 130000},
+            unlocked = true,
+        },
+        {
+            name = "Formation Mastery Training",
+            type = .formation_mastery_boost,
+            current_tier = &gs.upgrades_system.formation_mastery_boost_tier,
+            max_tier = 3,
+            tier_costs = []int{0, 35000, 75000, 150000},
+            unlocked = true,
+        },
+        {
+            name = "Battle Meditation Enhancement",
+            type = .battle_meditation_boost,
+            current_tier = &gs.upgrades_system.battle_meditation_boost_tier,
+            max_tier = 3,
+            tier_costs = []int{0, 45000, 90000, 180000},
+            unlocked = true,
+        },
+        {
+            name = "War Treasury Mastery",
+            type = .war_preparation_boost,
+            current_tier = &gs.upgrades_system.war_preparation_boost_tier,
+            max_tier = 3,
+            tier_costs = []int{0, 55000, 110000, 220000},
+            unlocked = true,
+        },
+        {
+            name = "Tactical Analysis Training",
+            type = .tactical_analysis_boost,
+            current_tier = &gs.upgrades_system.tactical_analysis_boost_tier,
+            max_tier = 3,
+            tier_costs = []int{0, 65000, 130000, 260000},
+            unlocked = true,
+        },
+        {
+            name = "Commander's Authority Enhancement",
+            type = .commanders_authority_boost,
+            current_tier = &gs.upgrades_system.commanders_authority_boost_tier,
+            max_tier = 3,
+            tier_costs = []int{0, 75000, 150000, 300000},
+            unlocked = true,
+        },
     }
     defer delete(upgrades)
 
-    list_cfg := cfg.list
-    current_y := list_cfg.start_y
+    items_per_page := 5
+    start_idx := gs.ui.upgrades_current_page * items_per_page
+    upgrades_count := len(upgrades)
+    available_pages := (upgrades_count + items_per_page - 1) / items_per_page
 
-    for upgrade in upgrades {
+    if gs.ui.upgrades_current_page > 0 {
+        prev_btn_pos := menu_pos + v2{-200, -200}
+        btn_size := v2{2, 2}
+        btn_bounds := v2{32, 32}
+        mouse_pos := mouse_pos_in_world_space()
+        hover := is_point_in_rect(mouse_pos, prev_btn_pos, btn_bounds)
+
+        draw_sprite_with_size(
+            prev_btn_pos,
+            btn_size,
+            hover ? .previous_page_btn : .previous_page_btn,
+            pivot = .center_center,
+            z_layer = .ui,
+        )
+
+        if hover && key_just_pressed(.LEFT_MOUSE) {
+            play_sound("button_click")
+            gs.ui.upgrades_current_page -= 1
+        }
+    }
+
+    if gs.ui.upgrades_current_page < available_pages - 1 {
+        next_btn_pos := menu_pos + v2{200, -200}
+        btn_size := v2{2, 2}
+        btn_bounds := v2{32, 32}
+        mouse_pos := mouse_pos_in_world_space()
+        hover := is_point_in_rect(mouse_pos, next_btn_pos, btn_bounds)
+
+        draw_sprite_with_size(
+            next_btn_pos,
+            btn_size,
+            hover ? .next_page_btn : .next_page_btn,
+            pivot = .center_center,
+            z_layer = .ui,
+        )
+
+        if hover && key_just_pressed(.LEFT_MOUSE) {
+            play_sound("button_click")
+            gs.ui.upgrades_current_page += 1
+        }
+    }
+
+    list_cfg := cfg.list
+    spacing := list_cfg.spacing
+    current_y := menu_pos.y + 150
+
+    end_idx := min(start_idx + items_per_page, upgrades_count)
+    for upgrade, i in upgrades[start_idx:end_idx] {
         if !upgrade.unlocked do continue
 
         name_pos := v2{list_cfg.start_x + list_cfg.title_offset_x, current_y}
@@ -4342,25 +4521,63 @@ render_upgrades_menu :: proc() {
                 z_layer = .ui,
             )
 
-        if hover && can_afford && key_just_pressed(.LEFT_MOUSE) {
+            if hover && can_afford && key_just_pressed(.LEFT_MOUSE) {
                 play_sound("button_click")
-                if upgrade.name == "Dummy Training" {
-                    unlock_dummy_tier(next_tier)
-                } else if upgrade.name == "Multiple Dummies" {
-                    unlock_multiple_dummy_tier(next_tier)
-                } else if upgrade.name == "Auto Spawn" {
-                    gs.upgrades_system.auto_spawn_unlocked = true
-                    gs.skills_system.gold -= upgrade.tier_costs[1]
-
-                    add_floating_text_params(
-                        v2{-200, 150},
-                        "Auto Spawn Unlocked!",
-                        v4{1, 0.8, 0, 1},
-                        scale = 0.8,
-                        target_scale = 1.0,
-                        lifetime = 1.0,
-                        velocity = v2{0, 75},
-                    )
+                #partial switch upgrade.type {
+                    case .dummy_training: unlock_dummy_tier(next_tier)
+                    case .multiple_dummies: unlock_multiple_dummy_tier(next_tier)
+                    case .auto_spawn: {
+                        gs.upgrades_system.auto_spawn_unlocked = true
+                        gs.skills_system.gold -= upgrade.tier_costs[1]
+                    }
+                    case .experience_boost: {
+                        gs.upgrades_system.experience_boost_tier = next_tier
+                        gs.skills_system.gold -= upgrade.tier_costs[next_tier]
+                    }
+                    case .strength_boost: {
+                        gs.upgrades_system.strength_boost_tier = next_tier
+                        gs.skills_system.gold -= upgrade.tier_costs[next_tier]
+                    }
+                    case .speed_boost: {
+                        gs.upgrades_system.speed_boost_tier = next_tier
+                        gs.skills_system.gold -= upgrade.tier_costs[next_tier]
+                    }
+                    case .critical_boost: {
+                        gs.upgrades_system.critical_boost_tier = next_tier
+                        gs.skills_system.gold -= upgrade.tier_costs[next_tier]
+                    }
+                    case .storm_arrows_boost: {
+                        gs.upgrades_system.storm_arrows_boost_tier = next_tier
+                        gs.skills_system.gold -= upgrade.tier_costs[next_tier]
+                    }
+                    case .mystic_fletcher_boost: {
+                        gs.upgrades_system.mystic_fletcher_boost_tier = next_tier
+                        gs.skills_system.gold -= upgrade.tier_costs[next_tier]
+                    }
+                    case .warrior_stamina_boost: {
+                        gs.upgrades_system.warrior_stamina_boost_tier = next_tier
+                        gs.skills_system.gold -= upgrade.tier_costs[next_tier]
+                    }
+                    case .formation_mastery_boost: {
+                        gs.upgrades_system.formation_mastery_boost_tier = next_tier
+                        gs.skills_system.gold -= upgrade.tier_costs[next_tier]
+                    }
+                    case .battle_meditation_boost: {
+                        gs.upgrades_system.battle_meditation_boost_tier = next_tier
+                        gs.skills_system.gold -= upgrade.tier_costs[next_tier]
+                    }
+                    case .war_preparation_boost: {
+                        gs.upgrades_system.war_preparation_boost_tier = next_tier
+                        gs.skills_system.gold -= upgrade.tier_costs[next_tier]
+                    }
+                    case .tactical_analysis_boost: {
+                        gs.upgrades_system.tactical_analysis_boost_tier = next_tier
+                        gs.skills_system.gold -= upgrade.tier_costs[next_tier]
+                    }
+                    case .commanders_authority_boost: {
+                        gs.upgrades_system.commanders_authority_boost_tier = next_tier
+                        gs.skills_system.gold -= upgrade.tier_costs[next_tier]
+                    }
                 }
             }
         } else {
@@ -4430,6 +4647,18 @@ Upgrades_System :: struct {
     current_multiple_tier: int,
     auto_spawn_unlocked: bool,
     frames_since_last_spawn: f32,
+    experience_boost_tier: int,
+    strength_boost_tier: int,
+    speed_boost_tier: int,
+    critical_boost_tier: int,
+    storm_arrows_boost_tier: int,
+    mystic_fletcher_boost_tier: int,
+    warrior_stamina_boost_tier: int,
+    formation_mastery_boost_tier: int,
+    battle_meditation_boost_tier: int,
+    war_preparation_boost_tier: int,
+    tactical_analysis_boost_tier: int,
+    commanders_authority_boost_tier: int,
 }
 
 Dummy_Tier :: struct {
@@ -4735,7 +4964,7 @@ init_skills_system :: proc() -> Skills_System {
         active_skill = nil,
         dummies_killed = 0,
         is_unlocked = false,
-        gold = 1000000,
+        gold = 0,
         menu_open = false,
         active_menu = .normal,
         passive_xp_timer = 0,
@@ -4976,8 +5205,84 @@ add_xp_to_active_skill :: proc(system: ^Skills_System, base_xp: int) -> int {
         xp_multiplier *= FOCUS_MODE_XP_MULTIPLIER
     }
 
+    skill_boost_multiplier := f32(1.0)
+    #partial switch system.active_skill.type {
+        case .xp_boost:
+            switch gs.upgrades_system.experience_boost_tier {
+                case 1: skill_boost_multiplier = 1.5
+                case 2: skill_boost_multiplier = 2.0
+                case 3: skill_boost_multiplier = 3.0
+            }
+        case .strength_boost:
+            switch gs.upgrades_system.strength_boost_tier {
+                case 1: skill_boost_multiplier = 1.5
+                case 2: skill_boost_multiplier = 2.0
+                case 3: skill_boost_multiplier = 3.0
+            }
+        case .speed_boost:
+            switch gs.upgrades_system.speed_boost_tier {
+                case 1: skill_boost_multiplier = 1.5
+                case 2: skill_boost_multiplier = 2.0
+                case 3: skill_boost_multiplier = 3.0
+            }
+        case .critical_boost:
+            switch gs.upgrades_system.critical_boost_tier {
+                case 1: skill_boost_multiplier = 1.5
+                case 2: skill_boost_multiplier = 2.0
+                case 3: skill_boost_multiplier = 3.0
+            }
+        case .storm_arrows:
+            switch gs.upgrades_system.storm_arrows_boost_tier {
+                case 1: skill_boost_multiplier = 1.5
+                case 2: skill_boost_multiplier = 2.0
+                case 3: skill_boost_multiplier = 3.0
+            }
+        case .mystic_fletcher:
+            switch gs.upgrades_system.mystic_fletcher_boost_tier {
+                case 1: skill_boost_multiplier = 1.5
+                case 2: skill_boost_multiplier = 2.0
+                case 3: skill_boost_multiplier = 3.0
+            }
+        case .warrior_stamina:
+            switch gs.upgrades_system.warrior_stamina_boost_tier {
+                case 1: skill_boost_multiplier = 1.5
+                case 2: skill_boost_multiplier = 2.0
+                case 3: skill_boost_multiplier = 3.0
+            }
+        case .formation_mastery:
+            switch gs.upgrades_system.formation_mastery_boost_tier {
+                case 1: skill_boost_multiplier = 1.5
+                case 2: skill_boost_multiplier = 2.0
+                case 3: skill_boost_multiplier = 3.0
+            }
+        case .battle_meditation:
+            switch gs.upgrades_system.battle_meditation_boost_tier {
+                case 1: skill_boost_multiplier = 1.5
+                case 2: skill_boost_multiplier = 2.0
+                case 3: skill_boost_multiplier = 3.0
+            }
+        case .war_preparation:
+            switch gs.upgrades_system.war_preparation_boost_tier {
+                case 1: skill_boost_multiplier = 1.5
+                case 2: skill_boost_multiplier = 2.0
+                case 3: skill_boost_multiplier = 3.0
+            }
+        case .tactical_analysis:
+            switch gs.upgrades_system.tactical_analysis_boost_tier {
+                case 1: skill_boost_multiplier = 1.5
+                case 2: skill_boost_multiplier = 2.0
+                case 3: skill_boost_multiplier = 3.0
+            }
+        case .commanders_authority:
+            switch gs.upgrades_system.commanders_authority_boost_tier {
+                case 1: skill_boost_multiplier = 1.5
+                case 2: skill_boost_multiplier = 2.0
+                case 3: skill_boost_multiplier = 3.0
+            }
+    }
+
     tier_multiplier := gs.upgrades_system.dummy_tiers[gs.upgrades_system.current_tier].xp_multiplier
-    total_xp := int(f32(base_xp) * xp_multiplier * tier_multiplier)
+    total_xp := int(f32(base_xp) * xp_multiplier * tier_multiplier * skill_boost_multiplier)
     prev_level := system.active_skill.level
 
     system.active_skill.current_xp += total_xp
@@ -5704,7 +6009,7 @@ render_active_skill_ui :: proc(skill: ^Skill) {
 
 render_skill_menu_button :: proc() {
     cfg := gs.ui_config.skills.button
-    button_pos := v2{0, cfg.pos_y}
+    button_pos := v2{0, cfg.pos_y + gs.ui.skills_button_y_offset}
     button_size := v2{cfg.size_x, cfg.size_y} * gs.ui.skills_button_scale
 
     draw_sprite_with_size(
@@ -6188,7 +6493,7 @@ init_splash_state :: proc(gs: ^Game_State){
         alpha = 0,
     }
 
-	if !ODIN_DEBUG {
+	if !ODIN_DEBUG && gs.state_kind != .game {
     	gs.state_kind = .splash
 	}else{
 		gs.state_kind = .game
@@ -6666,6 +6971,8 @@ load_game :: proc() -> bool {
     en.target_bow_angle = 0
     gs.player_handle = entity_to_handle(en^)
 
+    gs.menu.state = .game
+
     fmt.println("Game loaded successfully")
     return true
 }
@@ -6681,7 +6988,7 @@ check_game_completion :: proc() {
     all_skills_maxed := true
 
     for skill in gs.skills_system.skills {
-        if !skills.is_unlocked || skill.level < 150 {
+        if !skill.is_unlocked || skill.level < 150 {
             all_skills_maxed = false
             break
         }
