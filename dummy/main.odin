@@ -1,4 +1,7 @@
+#+feature dynamic-literals
 package main
+
+VERSION :: "0.2"
 
 import "base:runtime"
 import "base:intrinsics"
@@ -35,6 +38,65 @@ app_state: struct {
 
 window_w :: 1280
 window_h :: 720
+
+Serializable_Skill :: struct {
+    type: Skill_Type,
+    name: string,
+    level: int,
+    current_xp: int,
+    xp_to_next_level: int,
+    description: string,
+    is_unlocked: bool,
+    display_xp: f32,
+}
+
+Serializable_Quest :: struct {
+    type: Quest_Type,
+    name: string,
+    description: string,
+    level: int,
+    is_unlocked: bool,
+    cooldown: f32,
+    required_skill: Skill_Type,
+    required_skill_levels: [5]int,
+    gold_per_tick: [5]int,
+    progress: f32,
+    display_progress: f32,
+    xp_per_tick: f32,
+    xp_target_skill: Skill_Type,
+    tactical_mode_active: bool,
+    tactical_mode_timer: f32,
+    tactical_mode_combo: int,
+    command_rotation_index: int,
+    command_timer: f32,
+    command_active: bool,
+}
+
+Serializable_Skills_System :: struct {
+    skills: []Serializable_Skill,
+    advanced_skills: []Serializable_Skill,
+    active_skill_type: Skill_Type,
+    dummies_killed: int,
+    is_unlocked: bool,
+    gold: int,
+    menu_open: bool,
+    active_menu: Skills_Menu_Type,
+    passive_xp_timer: f32,
+    focus_mode_active: bool,
+    focus_mode_timer: f32,
+    focus_mode_button_visible: bool,
+    focus_mode_button_timer: f32,
+}
+
+Serializable_Quests_System :: struct {
+    quests: []Serializable_Quest,
+    active_quest_type: Quest_Type,
+    timer: f32,
+    menu_open: bool,
+    rotation_pairs: [][2]Quest_Type,
+    active_menu: Quest_Menu_Type,
+}
+
 
 main :: proc() {
 	sapp.run({
@@ -85,6 +147,25 @@ init :: proc "c" () {
     gs.menu = init_menu()
 
     gs.dummies_killed = 0
+
+    for &e in gs.entities {
+        if .allocated in e.flags {
+            entity_destroy(&e)
+        }
+    }
+
+    if load_game() {
+        gs.state_kind = .game
+    } else {
+        init_splash_state(gs)
+        gs.ui_hot_reload = init_ui_hot_reload()
+        gs.ui_config = gs.ui_hot_reload.config
+        gs.skills_system = init_skills_system()
+        gs.quests_system = init_quests_system()
+        gs.upgrades_system = init_upgrades_system()
+        gs.menu = init_menu()
+        gs.dummies_killed = 0
+    }
 
     for &e, kind in entity_data {
         setup_entity(&e, kind)
@@ -1010,6 +1091,7 @@ Game_State :: struct {
     state_kind: Game_State_Kind,
     tutorial_system: Tutorial_System,
     dummies_killed: f32,
+    save_timer: f32,
 }
 gs: ^Game_State
 
@@ -1047,6 +1129,12 @@ update :: proc(dt: f64) {
         	update_menu(&gs.menu)
 
         	if gs.menu.state == .game {
+                gs.save_timer += f32(dt)
+                if gs.save_timer >= AUTO_SAVE_INTERVAL {
+                    gs.save_timer = 0
+                    save_game()
+                }
+
                 focus_mode_skill_update(f32(dt))
 
             	for &en in gs.entities {
@@ -2957,7 +3045,7 @@ XP :: XP_CONSTANTS{
     BASE_XP_FROM_DUMMY = 500,
     BASE_XP_BOOST = 0.10,
     XP_BOOST_PER_LEVEL = 0.10,
-    MAX_LEVEL = 25,
+    MAX_LEVEL = 150,
     LEVEL_XP_MULTIPLIER = 1.2,
 }
 
@@ -4909,6 +4997,7 @@ add_xp_to_active_skill :: proc(system: ^Skills_System, base_xp: int) -> int {
 
     if system.active_skill.level > prev_level {
         check_quest_unlocks(system.active_skill)
+        check_game_completion()
     }
 
     return total_xp
@@ -6010,23 +6099,23 @@ Menu_Config :: struct {
 }
 
 init_menu :: proc() -> Game_Menu {
-	gs.tutorial_system = init_tutorial_system()
+    gs.tutorial_system = init_tutorial_system()
 
-	return Game_Menu{
-		state = .main_menu,
-		menu_alpha = 1.0,
-		start_button = {
-			pos = {0, -50},
-			size = {50, 10},
-			text = "Start Game",
-			hover = false,
-		},
-		title_image = {
-			pos = {0,0},
-			size = {512, 256},
-			sprite = .title,
-		},
-	}
+    return Game_Menu{
+        state = gs.state_kind == .game ? .game : .main_menu,
+        menu_alpha = 1.0,
+        start_button = {
+            pos = {0, -50},
+            size = {50, 10},
+            text = "Start Game",
+            hover = false,
+        },
+        title_image = {
+            pos = {0,0},
+            size = {512, 256},
+            sprite = .title,
+        },
+    }
 }
 
 render_menu :: proc(menu: ^Game_Menu) {
@@ -6077,7 +6166,6 @@ update_menu :: proc(menu: ^Game_Menu) {
             gs.player_handle = entity_to_handle(en^)
 
             show_tutorial_box(&gs.tutorial_system, "Press the spawn dummy button to spawn a Dummy.")
-            //start_tutorial_sequence(&gs.tutorial_system, "game_start", "Press the spawn dummy button to spawn a Dummy.","Destroy dummies to gain XP.")
         }
     }
 }
@@ -6297,5 +6385,353 @@ show_next_tutorial_message :: proc(system: ^Tutorial_System) {
         next_msg := pop_front(&system.message_queue)
         system.shown_messages[next_msg.id] = true
         show_tutorial_box(system, next_msg.text)
+    }
+}
+
+//
+// :saving
+AUTO_SAVE_INTERVAL :: 2.0
+SAVE_FILE_PATH :: "save_data.json"
+
+Save_Data :: struct {
+    skills_system: Serializable_Skills_System,
+    quests_system: Serializable_Quests_System,
+    upgrades_system: Upgrades_System,  // This should be fine as-is
+    dummies_killed: f32,
+    tutorial_shown_messages: map[string]bool,
+    gold: int,
+
+    last_save_time: time.Time,
+    version: string,
+}
+
+save_game :: proc() {
+    serializable_skills := make([]Serializable_Skill, len(gs.skills_system.skills))
+    defer delete(serializable_skills)
+
+    for skill, i in gs.skills_system.skills {
+        serializable_skills[i] = Serializable_Skill{
+            type = skill.type,
+            name = skill.name,
+            level = skill.level,
+            current_xp = skill.current_xp,
+            xp_to_next_level = skill.xp_to_next_level,
+            description = skill.description,
+            is_unlocked = skill.is_unlocked,
+            display_xp = skill.display_xp,
+        }
+    }
+
+    serializable_advanced_skills := make([]Serializable_Skill, len(gs.skills_system.advanced_skills))
+    defer delete(serializable_advanced_skills)
+
+    for skill, i in gs.skills_system.advanced_skills {
+        serializable_advanced_skills[i] = Serializable_Skill{
+            type = skill.type,
+            name = skill.name,
+            level = skill.level,
+            current_xp = skill.current_xp,
+            xp_to_next_level = skill.xp_to_next_level,
+            description = skill.description,
+            is_unlocked = skill.is_unlocked,
+            display_xp = skill.display_xp,
+        }
+    }
+
+    serializable_quests := make([]Serializable_Quest, len(gs.quests_system.quests))
+    defer delete(serializable_quests)
+
+    for quest, i in gs.quests_system.quests {
+        serializable_quests[i] = Serializable_Quest{
+            type = quest.type,
+            name = quest.name,
+            description = quest.description,
+            level = quest.level,
+            is_unlocked = quest.is_unlocked,
+            cooldown = quest.cooldown,
+            required_skill = quest.required_skill,
+            required_skill_levels = quest.required_skill_levels,
+            gold_per_tick = quest.gold_per_tick,
+            progress = quest.progress,
+            display_progress = quest.display_progress,
+            xp_per_tick = quest.xp_per_tick,
+            xp_target_skill = quest.xp_target_skill,
+            tactical_mode_active = quest.tactical_mode_active,
+            tactical_mode_timer = quest.tactical_mode_timer,
+            tactical_mode_combo = quest.tactical_mode_combo,
+            command_rotation_index = quest.command_rotation_index,
+            command_timer = quest.command_timer,
+            command_active = quest.command_active,
+        }
+    }
+
+    active_skill_type := Skill_Type.nil
+    if gs.skills_system.active_skill != nil {
+        active_skill_type = gs.skills_system.active_skill.type
+    }
+
+    active_quest_type := Quest_Type.nil
+    if gs.quests_system.active_quest != nil {
+        active_quest_type = gs.quests_system.active_quest.type
+    }
+
+    serializable_skills_system := Serializable_Skills_System{
+        skills = serializable_skills,
+        advanced_skills = serializable_advanced_skills,
+        active_skill_type = active_skill_type,
+        dummies_killed = gs.skills_system.dummies_killed,
+        is_unlocked = gs.skills_system.is_unlocked,
+        gold = gs.skills_system.gold,
+        menu_open = gs.skills_system.menu_open,
+        active_menu = gs.skills_system.active_menu,
+        passive_xp_timer = gs.skills_system.passive_xp_timer,
+        focus_mode_active = gs.skills_system.focus_mode_active,
+        focus_mode_timer = gs.skills_system.focus_mode_timer,
+        focus_mode_button_visible = gs.skills_system.focus_mode_button_visible,
+        focus_mode_button_timer = gs.skills_system.focus_mode_button_timer,
+    }
+
+    serializable_quests_system := Serializable_Quests_System{
+        quests = serializable_quests,
+        active_quest_type = active_quest_type,
+        timer = gs.quests_system.timer,
+        menu_open = gs.quests_system.menu_open,
+        rotation_pairs = gs.quests_system.rotation_pairs,
+        active_menu = gs.quests_system.active_menu,
+    }
+
+    save_data := Save_Data{
+        skills_system = serializable_skills_system,
+        quests_system = serializable_quests_system,
+        upgrades_system = gs.upgrades_system,
+        dummies_killed = gs.dummies_killed,
+        tutorial_shown_messages = gs.tutorial_system.shown_messages,
+        gold = gs.skills_system.gold,
+        last_save_time = time.now(),
+        version = VERSION,
+    }
+
+    data, err := json.marshal(save_data)
+    if err != nil {
+        fmt.println("Error marshaling save data:", err)
+        return
+    }
+
+    os.write_entire_file(SAVE_FILE_PATH, data)
+    fmt.println("Game saved successfully")
+}
+
+load_game :: proc() -> bool {
+    if !os.exists(SAVE_FILE_PATH) {
+        fmt.println("No save file found, starting new game")
+        return false
+    }
+
+    data, ok := os.read_entire_file(SAVE_FILE_PATH)
+    if !ok {
+        fmt.println("Error reading save file")
+        return false
+    }
+
+    save_data: Save_Data
+    err := json.unmarshal(data, &save_data)
+    if err != nil {
+        fmt.println("Error unmarshaling save data:", err)
+        return false
+    }
+
+    if save_data.version != VERSION {
+        fmt.println("Warning: Save file version mismatch")
+    }
+
+    clear(&gs.skills_system.skills)
+    for serialized_skill in save_data.skills_system.skills {
+        skill := Skill{
+            type = serialized_skill.type,
+            name = strings.clone(serialized_skill.name),
+            level = serialized_skill.level,
+            current_xp = serialized_skill.current_xp,
+            xp_to_next_level = serialized_skill.xp_to_next_level,
+            description = strings.clone(serialized_skill.description),
+            is_unlocked = serialized_skill.is_unlocked,
+            display_xp = serialized_skill.display_xp,
+        }
+        append(&gs.skills_system.skills, skill)
+    }
+
+    clear(&gs.skills_system.advanced_skills)
+    for serialized_skill in save_data.skills_system.advanced_skills {
+        skill := Skill{
+            type = serialized_skill.type,
+            name = strings.clone(serialized_skill.name),
+            level = serialized_skill.level,
+            current_xp = serialized_skill.current_xp,
+            xp_to_next_level = serialized_skill.xp_to_next_level,
+            description = strings.clone(serialized_skill.description),
+            is_unlocked = serialized_skill.is_unlocked,
+            display_xp = serialized_skill.display_xp,
+        }
+        append(&gs.skills_system.advanced_skills, skill)
+    }
+
+    clear(&gs.quests_system.quests)
+    for serialized_quest in save_data.quests_system.quests {
+        quest := Quest{
+            type = serialized_quest.type,
+            name = strings.clone(serialized_quest.name),
+            description = strings.clone(serialized_quest.description),
+            level = serialized_quest.level,
+            is_unlocked = serialized_quest.is_unlocked,
+            cooldown = serialized_quest.cooldown,
+            required_skill = serialized_quest.required_skill,
+            required_skill_levels = serialized_quest.required_skill_levels,
+            gold_per_tick = serialized_quest.gold_per_tick,
+            progress = serialized_quest.progress,
+            display_progress = serialized_quest.display_progress,
+            xp_per_tick = serialized_quest.xp_per_tick,
+            xp_target_skill = serialized_quest.xp_target_skill,
+            tactical_mode_active = serialized_quest.tactical_mode_active,
+            tactical_mode_timer = serialized_quest.tactical_mode_timer,
+            tactical_mode_combo = serialized_quest.tactical_mode_combo,
+            command_rotation_index = serialized_quest.command_rotation_index,
+            command_timer = serialized_quest.command_timer,
+            command_active = serialized_quest.command_active,
+        }
+        append(&gs.quests_system.quests, quest)
+    }
+
+    gs.skills_system.is_unlocked = save_data.skills_system.is_unlocked
+    gs.skills_system.dummies_killed = save_data.skills_system.dummies_killed
+    gs.skills_system.gold = save_data.skills_system.gold
+    gs.skills_system.menu_open = save_data.skills_system.menu_open
+    gs.skills_system.active_menu = save_data.skills_system.active_menu
+    gs.skills_system.passive_xp_timer = save_data.skills_system.passive_xp_timer
+    gs.skills_system.focus_mode_active = save_data.skills_system.focus_mode_active
+    gs.skills_system.focus_mode_timer = save_data.skills_system.focus_mode_timer
+    gs.skills_system.focus_mode_button_visible = save_data.skills_system.focus_mode_button_visible
+    gs.skills_system.focus_mode_button_timer = save_data.skills_system.focus_mode_button_timer
+
+    gs.quests_system.timer = save_data.quests_system.timer
+    gs.quests_system.menu_open = save_data.quests_system.menu_open
+    gs.quests_system.rotation_pairs = save_data.quests_system.rotation_pairs
+    gs.quests_system.active_menu = save_data.quests_system.active_menu
+
+    gs.upgrades_system = save_data.upgrades_system
+    gs.dummies_killed = save_data.dummies_killed
+    gs.tutorial_system.shown_messages = save_data.tutorial_shown_messages
+
+    if save_data.skills_system.active_skill_type != .nil {
+        for &skill in gs.skills_system.skills {
+            if skill.type == save_data.skills_system.active_skill_type {
+                gs.skills_system.active_skill = &skill
+                break
+            }
+        }
+        if gs.skills_system.active_skill == nil {
+            for &skill in gs.skills_system.advanced_skills {
+                if skill.type == save_data.skills_system.active_skill_type {
+                    gs.skills_system.active_skill = &skill
+                    break
+                }
+            }
+        }
+    }
+
+    if save_data.quests_system.active_quest_type != .nil {
+        for &quest in gs.quests_system.quests {
+            if quest.type == save_data.quests_system.active_quest_type {
+                gs.quests_system.active_quest = &quest
+                break
+            }
+        }
+    }
+
+    for &e in gs.entities {
+        if .allocated in e.flags {
+            entity_destroy(&e)
+        }
+    }
+
+    en := entity_create()
+    if en == nil {
+        fmt.println("Failed to create player entity")
+        return false
+    }
+
+    setup_player(en)
+    en.arrow_count = 0
+    en.shoot_cooldown = 0
+    en.max_arrows = 1
+    en.bow_angle = 0
+    en.target_bow_angle = 0
+    gs.player_handle = entity_to_handle(en^)
+
+    fmt.println("Game loaded successfully")
+    return true
+}
+
+//
+// :game end
+
+check_game_completion :: proc() {
+    if !gs.skills_system.is_unlocked {
+        return
+    }
+
+    all_skills_maxed := true
+
+    for skill in gs.skills_system.skills {
+        if !skills.is_unlocked || skill.level < 150 {
+            all_skills_maxed = false
+            break
+        }
+    }
+
+    if !all_skills_maxed {
+        return
+    }
+
+    for skill in gs.skills_system.advanced_skills {
+        if !skill.is_unlocked || skill.level < 150 {
+            all_skills_maxed = false
+            break
+        }
+    }
+
+    if all_skills_maxed {
+        reset_game_state()
+
+        add_floating_text_params(
+            v2{0, 0},
+            "Congratulations! All skills reached level 150!",
+            v4{1, 0.8, 0, 1},
+            scale = 1.5,
+            target_scale = 2.0,
+            lifetime = 3.0,
+            velocity = v2{0, 50},
+        )
+    }
+}
+
+reset_game_state :: proc() {
+    for &e in gs.entities {
+        if .allocated in e.flags {
+            entity_destroy(&e)
+        }
+    }
+
+    gs.skills_system = init_skills_system()
+    gs.quests_system = init_quests_system()
+    gs.upgrades_system = init_upgrades_system()
+    gs.menu = init_menu()
+    gs.dummies_killed = 0
+
+    gs.ui = {}
+    init_ui_state(gs)
+
+    gs.menu.state = .main_menu
+
+    if os.exists(SAVE_FILE_PATH) {
+        os.remove(SAVE_FILE_PATH)
     }
 }
