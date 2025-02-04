@@ -1,7 +1,7 @@
 #+feature dynamic-literals
 package main
 
-VERSION :: "0.2"
+VERSION :: "0.2.1"
 
 import "base:runtime"
 import "base:intrinsics"
@@ -1573,7 +1573,7 @@ DUMMY_POSITIONS := []Vector2{
     {300, -320},
     {450, -320},
     {600, -320},
-    {750, -320},
+    {150, -320},
 }
 
 spawn_dummy :: proc(position: Vector2, is_ghost := false) -> ^Entity {
@@ -2792,7 +2792,7 @@ UI := UI_CONSTANTS{
     MENU_TRANSITION_SPEED = 10.0,
     HOVER_SCALE_SPEED = 15.0,
     TOOLTIP_FADE_SPEED = 8.0,
-    SKILL_BUTTON_SIZE = {48, 48},
+    SKILL_BUTTON_SIZE = {48, 100},
     SKILL_MENU_SIZE = {400, 500},
     SKILL_ICON_SIZE = {40, 40},
     NORMAL_SCALE = 1.0,
@@ -4963,7 +4963,7 @@ init_skills_system :: proc() -> Skills_System {
         active_skill = nil,
         dummies_killed = 0,
         is_unlocked = false,
-        gold = 0,
+        gold = 1000000,
         menu_open = false,
         active_menu = .normal,
         passive_xp_timer = 0,

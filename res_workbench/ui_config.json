@@ -123,7 +123,7 @@
       "background_sprite": "skills_panel_bg"
     },
     "button": {
-      "pos_x": 40,
+      "pos_x": 60,
       "pos_y": 375,
       "size_x": 10,
       "size_y": 13,

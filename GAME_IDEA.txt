@@ -120,8 +120,6 @@ IN PROGRESS:
 
 TO DO:
 
-- Finish "UPGRADES" system by implementing more upgrades.
-
 - Do a complete UI rework.
 
 - Add a new system.
@@ -132,11 +130,14 @@ TO DO:
 
 - Add more sound effects.
 
-- Change player sprite.
-
 - Add more backgrounds/scenes.
 
 - Add small settings menu (sound and music settings, turn off tutorial, etc)
 
 DONE:
 - Add logic for Game Saving.
+- Change UI a little bit.
+- Finished "UPGRADES" System.
+- Added Tutorials only for first minutes of the game.
+- Fixed a bug in the UI.
+- Changed Character Sprite.
