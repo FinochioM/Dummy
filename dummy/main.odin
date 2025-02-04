@@ -97,7 +97,6 @@ Serializable_Quests_System :: struct {
     active_menu: Quest_Menu_Type,
 }
 
-
 main :: proc() {
 	sapp.run({
 		init_cb = init,
