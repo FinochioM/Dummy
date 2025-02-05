@@ -2,7 +2,7 @@
 <objects serializationModel="Studio.02.02.00">
 	<object class="Event" id="{b08d29fc-0fb8-446d-8906-78adbd683600}">
 		<property name="name">
-			<value>dummy_hit_weak</value>
+			<value>dummy_hit_weakpoint</value>
 		</property>
 		<property name="outputFormat">
 			<value>1</value>
@@ -83,7 +83,7 @@
 	</object>
 	<object class="EventMixerMaster" id="{878d682e-5e6e-49b7-b020-c6f9c2e512ae}">
 		<property name="volume">
-			<value>-6</value>
+			<value>-10</value>
 		</property>
 		<relationship name="effectChain">
 			<destination>{c3ba94f5-200f-499a-ae36-1a5bead34bf6}</destination>

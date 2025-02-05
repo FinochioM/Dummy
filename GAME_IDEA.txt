@@ -126,15 +126,20 @@ TO DO:
 
 - Work on progression, bugs and feeback that people share.
 
-- Add particle effects.
-
 - Add more sound effects.
 
 - Add more backgrounds/scenes.
 
 - Add small settings menu (sound and music settings, turn off tutorial, etc)
 
-DONE:
+----------------------------------------------------------------------------------
+
+V_0.2.2:
+- Fixed a BUG with the sound. It was playing too many sounds without any space in between.
+- Fixed a BUG in the Quests UI. Added pages sytem similar to the Upgrades UI.
+- Added particle effects.
+
+V_0.2.1:
 - Add logic for Game Saving.
 - Change UI a little bit.
 - Finished "UPGRADES" System.

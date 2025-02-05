@@ -155,8 +155,8 @@
     },
     "quest_entry": {
       "start_offset_x": -100,
-      "start_offset_y": 200,
-      "spacing_y": 100,
+      "start_offset_y": 210,
+      "spacing_y": 60,
       "size_x": 0,
       "size_y": 0,
       "name_offset_x": -120,

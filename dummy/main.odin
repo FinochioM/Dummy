@@ -33,7 +33,8 @@ app_state: struct {
 	bind: sg.Bindings,
 	game: Game_State,
 	input_state: Input_State,
-    last_frame_time: time.Time
+    last_frame_time: time.Time,
+    frame: struct{},
 }
 
 window_w :: 1280
@@ -386,7 +387,91 @@ interpolate :: proc(a, b: $T, t: f32) -> T where intrinsics.type_is_float(T) {
     return a + (b - a) * t
 }
 
-// UI Utilities
+Rect :: Vector4
+rect_collide_rect :: proc(a: Rect, b: Rect) -> (bool, Vector2) {
+	// Calculate overlap on each axis
+	dx := (a.z + a.x) / 2 - (b.z + b.x) / 2;
+	dy := (a.w + a.y) / 2 - (b.w + b.y) / 2;
+
+	overlap_x := (a.z - a.x) / 2 + (b.z - b.x) / 2 - abs(dx);
+	overlap_y := (a.w - a.y) / 2 + (b.w - b.y) / 2 - abs(dy);
+
+	// If there is no overlap on any axis, there is no collision
+	if overlap_x <= 0 || overlap_y <= 0 {
+		return false, Vector2{};
+	}
+
+	// Find the penetration vector
+	penetration := Vector2{};
+	if overlap_x < overlap_y {
+		penetration.x = overlap_x if dx > 0 else -overlap_x;
+	} else {
+		penetration.y = overlap_y if dy > 0 else -overlap_y;
+	}
+
+	return true, penetration;
+}
+
+rect_get_center :: proc(a: Vector4) -> Vector2 {
+	min := a.xy;
+	max := a.zw;
+	return { min.x + 0.5 * (max.x-min.x), min.y + 0.5 * (max.y-min.y) };
+}
+
+// rect_make :: proc(pos_x: float, pos_y: float, size_x: float, size_y: float) -> Vector4 {
+// 	return {pos_x, pos_y, pos_x + size_x, pos_y + size_y};
+// }
+rect_make_with_pos :: proc(pos: Vector2, size: Vector2, pivot:= Pivot.bottom_left) -> Vector4 {
+	rect := (Vector4){0,0,size.x,size.y};
+	rect = rect_shift(rect, pos - scale_from_pivot(pivot) * size);
+	return rect;
+}
+rect_make_with_size :: proc(size: Vector2, pivot: Pivot) -> Vector4 {
+	return rect_make({}, size, pivot);
+}
+
+rect_make :: proc{
+	rect_make_with_pos,
+	rect_make_with_size
+}
+
+rect_shift :: proc(rect: Vector4, amount: Vector2) -> Vector4 {
+	return {rect.x + amount.x, rect.y + amount.y, rect.z + amount.x, rect.w + amount.y};
+}
+
+rect_size :: proc(rect: Rect) -> Vector2 {
+	return { abs(rect.x - rect.z), abs(rect.y - rect.w) }
+}
+
+rect_scale :: proc(_rect: Rect, scale: f32) -> Rect {
+	rect := _rect
+	origin := rect.xy
+	rect = rect_shift(rect, -origin)
+	scale_amount := (rect.zw * scale)-rect.zw
+	rect.xy -= scale_amount / 2
+	rect.zw += scale_amount / 2
+	rect = rect_shift(rect, origin)
+	return rect
+}
+
+float_alpha :: proc{
+	float_alpha_f32, float_alpha_f64
+}
+
+float_alpha_f32 :: proc(x: f32, min: f32, max: f32, clamp_result: bool = true) -> f32
+{
+	res := (x - min) / (max - min);
+	if clamp_result { res = clamp(res, 0, 1); }
+	return res;
+}
+
+float_alpha_f64 :: proc(x: f64, min: f64, max: f64, clamp_result: bool = true) -> f64
+{
+	res := (x - min) / (max - min);
+	if clamp_result { res = clamp(res, 0, 1); }
+	return res;
+}
+
 get_skill_button_pos :: proc() -> Vector2 {
     return Vector2{0, game_res_h * 0.45}
 }
@@ -584,6 +669,7 @@ ZLayer :: enum u8{
     background,
     player,
     foreground,
+    particles,
     midground,
     ui,
     xp_bars,
@@ -1098,6 +1184,8 @@ Game_State :: struct {
     tutorial_system: Tutorial_System,
     dummies_killed: f32,
     save_timer: f32,
+    last_normal_hit_time: f64,
+    last_weak_hit_time: f64,
 }
 gs: ^Game_State
 
@@ -1218,6 +1306,8 @@ render :: proc() {
 
         	render_menu(&gs.menu)
         	render_tutorial_box(&gs.tutorial_system)
+
+        	particle_update_and_render()
 
         	if gs.menu.state == .game {
                if !has_active_dummy() {
@@ -1669,6 +1759,7 @@ Arrow_Data :: struct {
     target_pos: Vector2,
     lifetime: f32,
     arrow_type: Arrow_Type,
+    trail_timer: f32,
 }
 
 ARROW_BASE_DAMAGE :: 20.0 // 20
@@ -1682,6 +1773,7 @@ GRAVITY_EFFECT :: 6000.0
 HIT_CHANCE :: 1.1
 DUMMY_TARGET_WIDTH :: 64.0
 DUMMY_TARGET_HEIGHT :: 64.0
+ARROW_TRAIL_INTERVAL :: 0.02
 
 update_arrow :: proc(e: ^Entity, dt: f32) {
     e.arrow_data.velocity.y -= GRAVITY_EFFECT * dt
@@ -1692,6 +1784,12 @@ update_arrow :: proc(e: ^Entity, dt: f32) {
     if e.arrow_data.lifetime <= 0 {
         entity_destroy(e, f32(dt))
         return
+    }
+
+    e.arrow_data.trail_timer -= dt
+    if e.arrow_data.trail_timer <= 0 {
+        spawn_arrow_trail_particle(e.pos, e.arrow_data.arrow_type)
+        e.arrow_data.trail_timer = ARROW_TRAIL_INTERVAL
     }
 
     arrow_radius := f32(10.0)
@@ -1732,16 +1830,12 @@ update_arrow :: proc(e: ^Entity, dt: f32) {
                 damage = ARROW_DAMAGE
             }
 
-            if weak_point_hit {
-                add_floating_text_params(
-                    target.pos + v2{0, 50},
-                    "WEAK POINT!",
-                    v4{1, 0.5, 0, 1},
-                    scale = 1.2,
-                    target_scale = 1.5,
-                    lifetime = 1.0,
-                    velocity = v2{0, 100},
-                )
+            hit_pos := weak_point_hit ? target.pos + target.weak_point_pos : target.pos + v2{0, 32}
+
+            if !weak_point_hit{
+                spawn_hit_particles(hit_pos, 8)
+            }else {
+                spawn_weak_point_particle(hit_pos, 12)
             }
 
             damage_entity(&target, damage, is_elemental)
@@ -1954,12 +2048,24 @@ damage_entity :: proc(e: ^Entity, base_damage: f32, is_elemental := false) {
         }
     }
 
-    if e.kind == .dummy && !e.has_weak_point{
-        play_sound("dummy_hit")
+    if e.kind == .dummy {
+        current_time := seconds_since_init()
+
+        if e.has_weak_point {
+            if current_time - gs.last_weak_hit_time > SOUND_COOLDOWN {
+                play_sound("dummy_hit_weakpoint")
+                gs.last_weak_hit_time = current_time
+            }
+        } else {
+            if current_time - gs.last_normal_hit_time > SOUND_COOLDOWN {
+                play_sound("dummy_hit")
+                gs.last_normal_hit_time = current_time
+            }
+        }
+        reset_and_play_animation(&e.animations, "hit")
     }
 
     if e.kind == .dummy && e.has_weak_point {
-        play_sound("dummy_hit_weakpoint")
         hit_pos := e.pos + e.weak_point_pos
         arrow_to_weak_point := hit_pos - e.pos
         if linalg.length(arrow_to_weak_point) <= e.weak_point_radius {
@@ -1987,10 +2093,6 @@ damage_entity :: proc(e: ^Entity, base_damage: f32, is_elemental := false) {
                 )
             }
         }
-    }
-
-    if e.kind == .dummy {
-        reset_and_play_animation(&e.animations, "hit")
     }
 
     text_pos := e.pos + v2{-40, 20}
@@ -2223,6 +2325,8 @@ setup_arrow :: proc(e: ^Entity, start_pos: Vector2, target_pos: Vector2, arrow_t
         lifetime = ARROW_LIFETIME,
         arrow_type = arrow_type,
     }
+
+    e.arrow_data.trail_timer = 0
 }
 
 //
@@ -7039,5 +7143,244 @@ reset_game_state :: proc() {
 
     if os.exists(SAVE_FILE_PATH) {
         os.remove(SAVE_FILE_PATH)
+    }
+}
+
+//
+// :particle
+
+Particle_Flags :: enum {
+	valid,
+	physics,
+}
+Particle :: struct {
+	flags: bit_set[Particle_Flags],
+	pos: Vector3,
+	vel: Vector3,
+	acc: Vector3,
+	col: Vector4,
+	lifetime: f32,
+	lifetime_left: f32,
+	fade_in_pct: f32,
+	fade_out_pct: f32,
+	z_layer: ZLayer,
+	size: v2,
+	restitution: f32,
+	friction: f32,
+	ground_y: f32,
+	type: int,
+}
+particles: [4096]Particle
+particle_cursor: int
+
+particle_create :: proc() -> ^Particle {
+	p := &particles[particle_cursor%len(particles)]
+	if .valid in p.flags {
+		log_warning("Overwriting particles, increase buffer or ease up ol' chap")
+	}
+	p^ = {}
+	p.flags |= {.valid}
+	p.col = COLOR_WHITE
+	p.z_layer = .particles
+	p.size = v2{1,1}
+	particle_cursor += 1
+	return p
+}
+
+particle_destroy :: proc(p: ^Particle) {
+	p^ = {}
+}
+
+particle_update_and_render :: proc() {
+   // Update
+   for &p in particles {
+       if p.type == 1 {
+           if .valid in p.flags {
+               if .physics in p.flags {
+                   p.vel += p.acc * f32(get_delta_time())
+                   p.pos += p.vel * f32(get_delta_time())
+
+                   if p.pos.y <= p.ground_y {
+                       p.pos.y = p.ground_y
+
+                       if abs(p.vel.y) > 1.0 {
+                           p.vel.y *= -p.restitution
+                       } else {
+                           p.vel.y = 0
+                       }
+
+                       p.vel.x *= 0.1
+
+                       if abs(p.vel.x) < 100 {
+                           p.vel.x = 0
+                       }
+                   }
+               }
+
+               if p.lifetime != 0 {
+                   if p.lifetime_left == 0 {
+                       p.lifetime_left = p.lifetime
+                   }
+                   p.lifetime_left -= f32(get_delta_time())
+                   if p.lifetime_left <= 0 {
+                       particle_destroy(&p)
+                       continue
+                   }
+               }
+           }
+       } else if p.type == 2 {
+           if .valid in p.flags {
+               if .physics in p.flags {
+                   if p.friction != 0 && p.pos.z == 0 {
+                       p.acc.xy += -p.vel.xy * p.friction
+                   }
+                   p.acc.z -= 980.0
+                   p.vel += p.acc * f32(get_delta_time())
+                   p.acc = {}
+                   p.pos += p.vel * f32(get_delta_time())
+                   if p.pos.z <= 0 {
+                       p.vel.z *= -1 * p.restitution
+                       p.pos.z = 0
+                   }
+               }
+               if p.lifetime != 0 {
+                   if p.lifetime_left == 0 {
+                       p.lifetime_left = p.lifetime
+                   }
+                   p.lifetime_left -= f32(get_delta_time())
+                   if p.lifetime_left <= 0 {
+                       particle_destroy(&p)
+                       continue
+                   }
+               }
+           }
+       }
+   }
+
+   // Render
+   for p in particles {
+       if p.type == 1 {
+           if .valid in p.flags {
+               push_z_layer(p.z_layer)
+               draw_pos := p.pos.xy
+               alpha_mask := COLOR_WHITE
+               if p.lifetime != 0 {
+                   lifetime_alpha := float_alpha(p.lifetime-p.lifetime_left, 0, p.lifetime)
+                   if p.fade_in_pct != 0 {
+                       alpha_mask.a *= float_alpha(lifetime_alpha, 0.0, p.fade_in_pct)
+                   }
+                   if p.fade_out_pct != 0 {
+                       alpha_mask.a *= 1.0-float_alpha(lifetime_alpha, 1.0-p.fade_out_pct, 1.0)
+                   }
+               }
+               rect := rect_make(draw_pos, p.size, pivot=Pivot.center_center)
+               draw_rect_aabb_actually(rect, col=p.col*alpha_mask)
+           }
+       } else if p.type == 2 {
+           if .valid in p.flags {
+               push_z_layer(p.z_layer)
+               draw_pos := p.pos.xy
+               draw_pos.y += p.pos.z
+               alpha_mask := COLOR_WHITE
+               if p.lifetime != 0 {
+                   lifetime_alpha := float_alpha(p.lifetime-p.lifetime_left, 0, p.lifetime)
+                   if p.fade_in_pct != 0 {
+                       alpha_mask.a *= float_alpha(lifetime_alpha, 0.0, p.fade_in_pct)
+                   }
+                   if p.fade_out_pct != 0 {
+                       alpha_mask.a = 1.0-float_alpha(lifetime_alpha, 1.0-p.fade_out_pct, 1.0)
+                   }
+               }
+               rect := rect_make(draw_pos, p.size, pivot=Pivot.center_center)
+               draw_rect_aabb_actually(rect, col=p.col*alpha_mask)
+           }
+       }
+   }
+}
+
+spawn_hit_particles :: proc(pos: Vector2, count: int) {
+    floor_y := -320.0
+
+    for i := 0; i < count; i += 1 {
+        p := particle_create()
+
+        p.type = 1
+        p.pos = Vector3{pos.x, pos.y, 0}
+
+        angle := rand.float32_range(-math.PI * 0.7, math.PI * 0.7)
+        speed := rand.float32_range(1.5, 1.5)
+        p.vel = Vector3{
+            rand.float32_range(1000, 20000) * speed,
+            rand.float32_range(-20000, -10000) * speed,
+            0,
+        }
+
+        p.flags |= {.physics}
+        p.size = v2{4, 4}
+        p.lifetime = 0.01
+        p.fade_out_pct = 0.05
+        p.col = v4{0.45, 0.37, 0.30, 1}
+
+        p.friction = 10000.0
+        p.restitution = 0.001
+        p.acc.y = -20000.0
+
+        p.ground_y = auto_cast floor_y
+    }
+}
+
+spawn_arrow_trail_particle :: proc(pos: Vector2, arrow_type: Arrow_Type) {
+    floor_y := -320.0
+    for i := 0; i < 2; i += 1 {
+        p := particle_create()
+        p.type = 1
+        p.size = v2{2.5, 2.5}
+
+        p.pos = Vector3{pos.x, pos.y, 0}
+
+        angle := rand.float32_range(-math.PI * 0.7, math.PI * 0.7)
+        speed := rand.float32_range(1.5, 1.5)
+        p.vel = Vector3{
+            rand.float32_range(1000, 2000) * speed,
+            rand.float32_range(-10000, -5000) * speed,
+            0,
+        }
+
+        p.flags |= {.physics}
+        p.lifetime = 0.01
+        p.fade_out_pct = 1.0
+        if arrow_type == .elemental {
+            p.col = v4{0.74, 0.09, 0.64, 0.6}
+        } else {
+            p.col = v4{0.8, 0.8, 0.8, 0.4}
+        }
+
+        p.friction = 10000.0
+        p.restitution = 0.001
+        p.acc.y = -20000.0
+
+        p.ground_y = auto_cast floor_y
+    }
+}
+
+spawn_weak_point_particle :: proc(pos: Vector2, count: int) {
+    for i := 0; i < count; i += 1 {
+        p := particle_create()
+        p.type = 2
+        angle := rand.float32_range(12000, 15000)
+        speed : f32 = 30000.0
+        p.pos = Vector3{pos.x, pos.y, 0}
+        p.vel = Vector3{
+            math.cos(angle) * speed,
+            math.sin(angle) * speed,
+            rand.float32_range(100, 200),
+        }
+        p.flags |= {.physics}
+        p.size = v2{2.5, 2.5}
+        p.lifetime = 0.01
+        p.fade_out_pct = 1.0
+        p.col = v4{1, 0.5, 0, 1}
+        p.restitution = 0.3
+        p.friction = 3.0
     }
 }

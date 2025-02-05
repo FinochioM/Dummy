@@ -20,6 +20,7 @@ Sound_State :: struct {
 }
 sound_st: Sound_State
 
+SOUND_COOLDOWN :: 0.1
 
 init_sound :: proc(){
     using fstudio
