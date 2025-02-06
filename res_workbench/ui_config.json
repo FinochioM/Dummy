@@ -270,6 +270,31 @@
       "bounds_height": 120.0,
     },
   },
+"settings": {
+    "button": {
+        "pos_x": 600.0,
+        "pos_y": 330.0,
+        "size_x": 16.0,
+        "size_y": 16.0,
+        "sprite": "settings_button"
+    },
+    "sound_button": {
+        "offset_x": 0.0,
+        "offset_y": -50.0,
+        "size_x": 6.0,
+        "size_y": 6.0,
+        "on_sprite": "sound_on",
+        "off_sprite": "sound_off"
+    },
+    "music_button": {
+        "offset_x": 0.0,
+        "offset_y": -100.0,
+        "size_x": 6.0,
+        "size_y": 6.0,
+        "on_sprite": "music_on",
+        "off_sprite": "music_off"
+    }
+ },
 
   "menu": {
     "state": "main_menu",

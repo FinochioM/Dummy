@@ -37,6 +37,7 @@ init_sound :: proc(){
 play_sound :: proc(name: string) {
     using fstudio
     using sound_st
+    if !gs.settings.sound_enabled do return
 
     event_path := fmt.tprintf("event:/%s", name)
 

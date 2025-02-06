@@ -130,14 +130,17 @@ TO DO:
 
 - Add more backgrounds/scenes.
 
-- Add small settings menu (sound and music settings, turn off tutorial, etc)
-
 ----------------------------------------------------------------------------------
+
+V_0.3:
+- Added settings menu. (sound, music and reset game).
+- Fixed a BUG in Skills button hover size.
 
 V_0.2.2:
 - Fixed a BUG with the sound. It was playing too many sounds without any space in between.
 - Fixed a BUG in the Quests UI. Added pages sytem similar to the Upgrades UI.
 - Added particle effects.
+- Fixed some UI texts.
 
 V_0.2.1:
 - Add logic for Game Saving.

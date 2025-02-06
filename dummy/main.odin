@@ -1,7 +1,7 @@
 #+feature dynamic-literals
 package main
 
-VERSION :: "0.2.1"
+VERSION :: "0.2.2"
 
 import "base:runtime"
 import "base:intrinsics"
@@ -130,10 +130,6 @@ init :: proc "c" () {
 	init_fonts()
 	init_sound()
 
-	if !ODIN_DEBUG {
-		play_sound("beat")
-	}
-
 	// :init
 	gs = &app_state.game
     init_splash_state(gs)
@@ -154,6 +150,8 @@ init :: proc "c" () {
             entity_destroy(&e)
         }
     }
+
+    play_background_music(&sound_st)
 
     if load_game() {
         gs.state_kind = .game
@@ -388,39 +386,7 @@ interpolate :: proc(a, b: $T, t: f32) -> T where intrinsics.type_is_float(T) {
 }
 
 Rect :: Vector4
-rect_collide_rect :: proc(a: Rect, b: Rect) -> (bool, Vector2) {
-	// Calculate overlap on each axis
-	dx := (a.z + a.x) / 2 - (b.z + b.x) / 2;
-	dy := (a.w + a.y) / 2 - (b.w + b.y) / 2;
 
-	overlap_x := (a.z - a.x) / 2 + (b.z - b.x) / 2 - abs(dx);
-	overlap_y := (a.w - a.y) / 2 + (b.w - b.y) / 2 - abs(dy);
-
-	// If there is no overlap on any axis, there is no collision
-	if overlap_x <= 0 || overlap_y <= 0 {
-		return false, Vector2{};
-	}
-
-	// Find the penetration vector
-	penetration := Vector2{};
-	if overlap_x < overlap_y {
-		penetration.x = overlap_x if dx > 0 else -overlap_x;
-	} else {
-		penetration.y = overlap_y if dy > 0 else -overlap_y;
-	}
-
-	return true, penetration;
-}
-
-rect_get_center :: proc(a: Vector4) -> Vector2 {
-	min := a.xy;
-	max := a.zw;
-	return { min.x + 0.5 * (max.x-min.x), min.y + 0.5 * (max.y-min.y) };
-}
-
-// rect_make :: proc(pos_x: float, pos_y: float, size_x: float, size_y: float) -> Vector4 {
-// 	return {pos_x, pos_y, pos_x + size_x, pos_y + size_y};
-// }
 rect_make_with_pos :: proc(pos: Vector2, size: Vector2, pivot:= Pivot.bottom_left) -> Vector4 {
 	rect := (Vector4){0,0,size.x,size.y};
 	rect = rect_shift(rect, pos - scale_from_pivot(pivot) * size);
@@ -437,10 +403,6 @@ rect_make :: proc{
 
 rect_shift :: proc(rect: Vector4, amount: Vector2) -> Vector4 {
 	return {rect.x + amount.x, rect.y + amount.y, rect.z + amount.x, rect.w + amount.y};
-}
-
-rect_size :: proc(rect: Rect) -> Vector2 {
-	return { abs(rect.x - rect.z), abs(rect.y - rect.w) }
 }
 
 rect_scale :: proc(_rect: Rect, scale: f32) -> Rect {
@@ -850,6 +812,12 @@ Image_Id :: enum {
     maki_logo,
     next_page_btn,
     previous_page_btn,
+    settings_button,
+    sound_on,
+    sound_off,
+    music_on,
+    music_off,
+    reset_button,
 }
 
 Image :: struct {
@@ -1177,6 +1145,13 @@ Game_State :: struct {
         quest_button_y_offset: f32,
         upgrades_button_y_offset: f32,
     },
+    settings: struct {
+        sound_enabled: bool,
+        music_enabled: bool,
+        menu_open: bool,
+        menu_alpha: f32,
+        button_scale: f32,
+    },
     upgrades_menu_open: bool,
     menu: Game_Menu,
     splash_state: Splash_State,
@@ -1308,6 +1283,7 @@ render :: proc() {
         	render_tutorial_box(&gs.tutorial_system)
 
         	particle_update_and_render()
+            render_settings_menu(gs)
 
         	if gs.menu.state == .game {
                if !has_active_dummy() {
@@ -2871,6 +2847,31 @@ UI_Config :: struct {
     },
     menu: Menu_Config,
     tutorial: Tutorial_Box_Config,
+    settings: struct {
+        button: struct {
+            pos_x: f32,
+            pos_y: f32,
+            size_x: f32,
+            size_y: f32,
+            sprite: Image_Id,
+        },
+        sound_button: struct {
+            offset_x: f32,
+            offset_y: f32,
+            size_x: f32,
+            size_y: f32,
+            on_sprite: Image_Id,
+            off_sprite: Image_Id,
+        },
+        music_button: struct {
+            offset_x: f32,
+            offset_y: f32,
+            size_x: f32,
+            size_y: f32,
+            on_sprite: Image_Id,
+            off_sprite: Image_Id,
+        },
+    },
 }
 
 UI_Hot_Reload :: struct {
@@ -2949,7 +2950,7 @@ update_ui_state :: proc(gs: ^Game_State, dt: f32) {
     mouse_pos := mouse_pos_in_world_space()
 
     cfg := gs.ui_config.quests.button
-    button_pos := v2{cfg.pos_x - 40, cfg.pos_y}
+    button_pos := v2{cfg.pos_x - 60, cfg.pos_y}
 
     if is_point_in_rect(mouse_pos, button_pos, UI.SKILL_BUTTON_SIZE) {
         animate_to_target_f32(&gs.ui.skills_button_y_offset, -50, dt, UI.HOVER_SCALE_SPEED)
@@ -3007,6 +3008,8 @@ update_ui_state :: proc(gs: ^Game_State, dt: f32) {
     } else {
         animate_to_target_f32(&gs.ui.skills_tooltip_alpha, 0.0, dt, UI.TOOLTIP_FADE_SPEED)
     }
+
+    update_settings_menu(gs, dt)
 
     gs.ui.last_mouse_pos = mouse_pos
 }
@@ -5067,7 +5070,7 @@ init_skills_system :: proc() -> Skills_System {
         active_skill = nil,
         dummies_killed = 0,
         is_unlocked = false,
-        gold = 1000000,
+        gold = 0,
         menu_open = false,
         active_menu = .normal,
         passive_xp_timer = 0,
@@ -5080,7 +5083,7 @@ init_skills_system :: proc() -> Skills_System {
         {.critical_boost, "Critical Mastery", "Increases critical hit chance by 1% per level"},
         {.storm_arrows, "Storm of Arrows", "Gain 5% chance per level to fire an additional arrow"},
         {.mystic_fletcher, "Mystic Fletcher", "Gain 5% chance per level to fire an additional elemental arrow that deals extra damage"},
-        {.warrior_stamina, "Warrior's Stamina", "Gain 5% change per leve to instantly fire another arrow after a critical hit"}
+        {.warrior_stamina, "Warrior's Stamina", "Gain 2% change per leve to instantly fire another arrow after a critical hit"}
     }
 
     advanced_skill_data := []struct{type: Skill_Type, name, desc: string} {
@@ -5286,7 +5289,7 @@ calculate_skill_bonus :: proc(skill: ^Skill) -> f32 {
         case .formation_mastery: base_bonus = 0.02 // 0.02
         case .battle_meditation: base_bonus = 0.01 // 0.01
         case .war_preparation: base_bonus = 0.02 // 0.02
-        case .tactical_analysis: base_bonus = 1.0 // 0.02
+        case .tactical_analysis: base_bonus = 0.02 // 0.02
         case .commanders_authority: base_bonus = PASSIVE_XP_BASE_RATE
         case: return 0.0
     }
@@ -6509,6 +6512,14 @@ Menu_Config :: struct {
 init_menu :: proc() -> Game_Menu {
     gs.tutorial_system = init_tutorial_system()
 
+    gs.settings = {
+        sound_enabled = true,
+        music_enabled = true,
+        menu_open = false,
+        menu_alpha = 0.0,
+        button_scale = 1.0,
+    }
+
     return Game_Menu{
         state = gs.state_kind == .game ? .game : .main_menu,
         menu_alpha = 1.0,
@@ -7382,5 +7393,109 @@ spawn_weak_point_particle :: proc(pos: Vector2, count: int) {
         p.col = v4{1, 0.5, 0, 1}
         p.restitution = 0.3
         p.friction = 3.0
+    }
+}
+
+//
+// :settings
+update_settings_menu :: proc(gs: ^Game_State, dt: f32) {
+    cfg := gs.ui_config.settings
+    mouse_pos := mouse_pos_in_world_space()
+
+    button_pos := v2{cfg.button.pos_x, cfg.button.pos_y}
+    button_size := v2{cfg.button.size_x, cfg.button.size_y}
+
+    if is_point_in_rect(mouse_pos, button_pos, button_size*2) {
+        if key_just_pressed(.LEFT_MOUSE) {
+            play_sound("button_click")
+            gs.settings.menu_open = !gs.settings.menu_open
+        }
+    } else {
+        animate_to_target_f32(&gs.settings.button_scale, 1.0, dt, UI.HOVER_SCALE_SPEED)
+    }
+
+    target_alpha := gs.settings.menu_open ? 1.0 : 0.0
+    animate_to_target_f32(&gs.settings.menu_alpha, auto_cast target_alpha, dt, UI.MENU_TRANSITION_SPEED)
+
+    if gs.settings.menu_alpha > 0 {
+        sound_pos := button_pos + v2{cfg.sound_button.offset_x, cfg.sound_button.offset_y}
+        sound_size := v2{cfg.sound_button.size_x, cfg.sound_button.size_y}
+
+        if is_point_in_rect(mouse_pos, sound_pos, sound_size * 2) && key_just_pressed(.LEFT_MOUSE) {
+            play_sound("button_click")
+            gs.settings.sound_enabled = !gs.settings.sound_enabled
+        }
+
+        music_pos := button_pos + v2{cfg.music_button.offset_x, cfg.music_button.offset_y}
+        music_size := v2{cfg.music_button.size_x, cfg.music_button.size_y}
+
+        if is_point_in_rect(mouse_pos, music_pos, music_size * 2) && key_just_pressed(.LEFT_MOUSE) {
+            play_sound("button_click")
+            gs.settings.music_enabled = !gs.settings.music_enabled
+            if gs.settings.music_enabled {
+                play_background_music(&sound_st)
+            } else {
+                if sound_st.current_music != nil {
+                    stop_sound(sound_st.current_music)
+                    sound_st.current_music = nil
+                }
+            }
+        }
+
+        reset_pos := button_pos + v2{cfg.music_button.offset_x, cfg.music_button.offset_y - 50}
+        if is_point_in_rect(mouse_pos, reset_pos, music_size * 2) && key_just_pressed(.LEFT_MOUSE) {
+            play_sound("button_click")
+            reset_game_state()
+            gs.settings.menu_open = false
+        }
+    }
+}
+
+render_settings_menu :: proc(gs: ^Game_State) {
+    cfg := gs.ui_config.settings
+    push_z_layer(.ui)
+
+    button_pos := v2{cfg.button.pos_x, cfg.button.pos_y}
+    button_size := v2{cfg.button.size_x, cfg.button.size_y}
+    draw_sprite_with_size(
+        button_pos,
+        button_size,
+        cfg.button.sprite,
+        pivot = .center_center,
+        xform = xform_scale(v2{gs.settings.button_scale, gs.settings.button_scale}),
+        z_layer = .ui,
+    )
+
+    if gs.settings.menu_open {
+        sound_pos := button_pos + v2{cfg.sound_button.offset_x, cfg.sound_button.offset_y}
+        sound_sprite := gs.settings.sound_enabled ? cfg.sound_button.on_sprite : cfg.sound_button.off_sprite
+        draw_sprite_with_size(
+            sound_pos,
+            v2{cfg.sound_button.size_x, cfg.sound_button.size_y},
+            sound_sprite,
+            pivot = .center_center,
+            z_layer = .ui,
+        )
+
+        music_pos := button_pos + v2{cfg.music_button.offset_x, cfg.music_button.offset_y}
+        music_sprite := gs.settings.music_enabled ? cfg.music_button.on_sprite : cfg.music_button.off_sprite
+        draw_sprite_with_size(
+            music_pos,
+            v2{cfg.music_button.size_x, cfg.music_button.size_y},
+            music_sprite,
+            pivot = .center_center,
+            z_layer = .ui,
+        )
+
+        reset_pos := button_pos + v2{cfg.music_button.offset_x, cfg.music_button.offset_y - 50}
+        draw_sprite_with_size(
+            reset_pos,
+            v2{cfg.music_button.size_x, cfg.music_button.size_y},
+            Image_Id.reset_button,
+            pivot = .center_center,
+            z_layer = .ui,
+        )
+    } else {
+        gs.settings.menu_alpha = 0
     }
 }
