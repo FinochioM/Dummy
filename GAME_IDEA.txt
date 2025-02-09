@@ -135,6 +135,9 @@ TO DO:
 V_0.3:
 - Added settings menu. (sound, music and reset game).
 - Fixed a BUG in Skills button hover size.
+- Changed Font.
+- Added new tooltip panel for Quests menu.
+- Fixed music_on image.
 
 V_0.2.2:
 - Fixed a BUG with the sound. It was playing too many sounds without any space in between.

@@ -1074,8 +1074,8 @@ init_fonts :: proc() {
 	using stbtt
 
 	bitmap, _ := mem.alloc(font_bitmap_w * font_bitmap_h)
-	font_height := 15
-	path := "res/fonts/alagard.ttf"
+	font_height := 16
+	path := "res/fonts/Minecraft.ttf"
 	ttf_data, err := os.read_entire_file(path)
 	assert(ttf_data != nil, "failed to read font")
 
@@ -1144,6 +1144,9 @@ Game_State :: struct {
         skills_button_y_offset: f32,
         quest_button_y_offset: f32,
         upgrades_button_y_offset: f32,
+        quests_hover_tooltip_active: bool,
+        quests_hover_tooltip_quest: ^Quest,
+        quests_tooltip_alpha: f32,
     },
     settings: struct {
         sound_enabled: bool,
@@ -1303,7 +1306,7 @@ render :: proc() {
                     )
 
                     text_pos := v2{cfg.txt_pos_x, cfg.txt_pos_y}
-                    draw_text(text_pos, "Spawn Dummy", scale = 1.0, z_layer = .ui)
+                    draw_text(text_pos, "Spawn Dummy", scale = 0.8, z_layer = .ui)
                 }
 
             	for &en in gs.entities {
@@ -2983,6 +2986,12 @@ update_ui_state :: proc(gs: ^Game_State, dt: f32) {
         animate_to_target_f32(&gs.ui.quest_button_scale, UI.NORMAL_SCALE, dt, UI.HOVER_SCALE_SPEED)
     }
 
+    if gs.ui.quests_hover_tooltip_active {
+        animate_to_target_f32(&gs.ui.quests_tooltip_alpha, 1.0, dt, UI.TOOLTIP_FADE_SPEED)
+    } else {
+        animate_to_target_f32(&gs.ui.quests_tooltip_alpha, 0.0, dt, UI.TOOLTIP_FADE_SPEED)
+    }
+
     cfg_upgrades := gs.ui_config.upgrades.button
     upgrades_button_pos := v2{cfg_upgrades.pos_x, cfg_upgrades.pos_y}
     if is_point_in_rect(mouse_pos, upgrades_button_pos, UI.SKILL_BUTTON_SIZE) {
@@ -3249,6 +3258,17 @@ Quest_UI_Config :: struct {
         bounds_y: f32,
         text_scale: f32,
         sprite: Image_Id,
+    },
+    tooltip: struct {
+        offset_x: f32,
+        offset_y: f32,
+        size_x: f32,
+        size_y: f32,
+        padding_x: f32,
+        padding_y: f32,
+        text_pos_x: f32,
+        text_pos_y: f32,
+        line_spacing: f32,
     },
     quest_entry: struct {
         start_offset_x: f32,
@@ -3547,6 +3567,85 @@ update_quests_system :: proc(system: ^Quests_System, dt: f32) {
             system.active_quest.progress,
             dt * 5
         )
+    }
+}
+
+draw_quest_tooltip :: proc(quest: ^Quest) {
+    if quest == nil do return
+    cfg := gs.ui_config.quests.tooltip
+
+    push_z_layer(.ui)
+
+    size := v2{cfg.size_x, cfg.size_y}
+    pos := v2{cfg.offset_x, cfg.offset_y}
+    padding := v2{cfg.padding_x, cfg.padding_y}
+
+    draw_sprite_1024(
+        pos,
+        size,
+        Image_Id.tooltip_bg,
+        pivot = .center_center,
+        z_layer = .ui
+    )
+
+    text_start := v2{cfg.text_pos_x, cfg.text_pos_y}
+    line_height := f32(cfg.line_spacing)
+
+    draw_wrapped_text(
+        text_start + v2{0, line_height},
+        quest.description,
+        Text_Bounds{width=230, height=100},
+        scale = 1.0,
+        z_layer = .ui,
+    )
+
+    gold_text := fmt.tprintf("Gold per tick: %d", quest.gold_per_tick[quest.level-1])
+    draw_text(
+        text_start + v2{0, line_height * 2},
+        gold_text,
+        z_layer = .ui
+    )
+
+    if quest.xp_per_tick > 0 {
+        xp_text := fmt.tprintf("XP per tick: %.0f to %s", quest.xp_per_tick, quest.xp_target_skill)
+        draw_text(
+            text_start + v2{0, line_height * 3},
+            xp_text,
+            z_layer = .ui
+        )
+    }
+
+    #partial switch quest.type {
+        case .formation_training:
+            draw_text(
+                text_start + v2{0, line_height * 4},
+                "Chance to boost random skills",
+                z_layer = .ui
+            )
+        case .meditation_training:
+            draw_text(
+                text_start + v2{0, line_height * 4},
+                fmt.tprintf("Focus Mode Duration: +%d seconds", quest.level),
+                z_layer = .ui
+            )
+        case .tactical_assessment:
+            draw_text(
+                text_start + v2{0, line_height * 4},
+                "Activates Tactical Mode for bonus gold",
+                z_layer = .ui
+            )
+        case .war_treasury:
+            draw_text(
+                text_start + v2{0, line_height * 4},
+                "Chance for bonus gold rewards",
+                z_layer = .ui
+            )
+        case .strategic_command:
+            draw_text(
+                text_start + v2{0, line_height * 4},
+                "Triggers multiple quest rewards",
+                z_layer = .ui
+            )
     }
 }
 
@@ -3996,6 +4095,14 @@ render_quest_entry_configured :: proc(quest: ^Quest, pos: Vector2) {
         )
     }
 
+    name_bounds := v2{260, 30}
+    new_name_pos := pos + v2{cfg.name_offset_x + 130, cfg.name_offset_y}
+    if is_point_in_rect(mouse_pos_in_world_space(), new_name_pos, name_bounds) {
+        gs.ui.quests_hover_tooltip_active = true
+        gs.ui.quests_hover_tooltip_quest = quest
+        draw_quest_tooltip(quest)
+    }
+
     draw_text(reward_pos, fmt.tprintf("Current: %d gold", current_gold), z_layer = .ui)
 
     if is_active { // XP BAR
@@ -4261,7 +4368,7 @@ draw_next_quest_panel :: proc(quest: ^Quest, pos: Vector2) {
         fmt.tprintf("Requires %s Level %d", required_skill_name, first_unlockable.required_skill_levels[0]),
         col = Colors.text * v4{1,1,1,1},
         pivot = .center_left,
-        z_layer = .ui
+        z_layer = .ui,
     )
 }
 
@@ -4592,7 +4699,7 @@ render_upgrades_menu :: proc() {
         draw_text(
             name_pos,
             upgrade.name,
-            scale = 1.2,
+            scale = 1.0,
             pivot = .center_left,
             z_layer = .ui,
         )
@@ -7479,6 +7586,10 @@ render_settings_menu :: proc(gs: ^Game_State) {
 
         music_pos := button_pos + v2{cfg.music_button.offset_x, cfg.music_button.offset_y}
         music_sprite := gs.settings.music_enabled ? cfg.music_button.on_sprite : cfg.music_button.off_sprite
+
+        fmt.println("Music enabled:", gs.settings.music_enabled)
+        fmt.println("Selected sprite:", music_sprite)
+
         draw_sprite_with_size(
             music_pos,
             v2{cfg.music_button.size_x, cfg.music_button.size_y},
