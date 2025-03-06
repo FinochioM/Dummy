@@ -1741,8 +1741,8 @@ Arrow_Data :: struct {
     trail_timer: f32,
 }
 
-ARROW_BASE_DAMAGE :: 20.0 // 20
-ARROW_DAMAGE :: 20.0 // 20
+ARROW_BASE_DAMAGE :: 200.0 // 20
+ARROW_DAMAGE :: 200.0 // 20
 ELEMENTAL_ARROW_DAMAGE :: 40.0
 SHOOT_COOLDOWN :: 1.2
 ARROW_SPEED :: 1700.0
@@ -3973,6 +3973,15 @@ get_quest_type_name :: proc(type: Quest_Type) -> string {
 check_quest_unlocks :: proc(skill: ^Skill) {
     if skill == nil do return
 
+    any_quests_unlocked_before := false
+    for quest in gs.quests_system.quests {
+        if quest.is_unlocked {
+            any_quests_unlocked_before = true
+            break
+        }
+    }
+
+    newly_unlocked_quest := false
     prev_quest_unlocked := true
     prev_quest_type: Quest_Type
 
@@ -3985,6 +3994,7 @@ check_quest_unlocks :: proc(skill: ^Skill) {
 
             if skill.level >= quest.required_skill_levels[0] {
                 quest.is_unlocked = true
+                newly_unlocked_quest = true
             }
         }
 
@@ -4013,6 +4023,38 @@ check_quest_unlocks :: proc(skill: ^Skill) {
         prev_quest_unlocked = quest.is_unlocked
         prev_quest_type = quest.type
     }
+
+    if newly_unlocked_quest && !any_quests_unlocked_before && !has_shown_quest_tutorial() {
+        start_tutorial_sequence(&gs.tutorial_system, "quests_unlock",
+            "You have unlocked the Quests System!",
+            "Complete quests to earn gold and special rewards!",
+            "Click the Quests button to manage your active quest.")
+    }
+
+    if skill.type == .strength_boost && skill.level == 2 && !has_shown_upgrades_tutorial() {
+        start_tutorial_sequence(&gs.tutorial_system, "upgrades_unlock",
+            "You have unlocked the Upgrades system!",
+            "Use gold to purchase permanent upgrades for your archer.",
+            "Click the Upgrades button to browse available upgrades.")
+    }
+
+    if skill.type == .strength_boost && skill.level == 3 && !has_shown_endgame_tutorial() {
+        start_tutorial_sequence(&gs.tutorial_system, "end_game_explain",
+            "Keep unlocking skills, quests and upgrades.",
+            "Reach level 150 on every skill to become the master archer.")
+    }
+}
+
+has_shown_endgame_tutorial :: proc() -> bool {
+    return gs.tutorial_system.shown_messages["end_game_explain_0"]
+}
+
+has_shown_quest_tutorial :: proc() -> bool {
+    return gs.tutorial_system.shown_messages["quests_unlock_0"]
+}
+
+has_shown_upgrades_tutorial :: proc() -> bool {
+    return gs.tutorial_system.shown_messages["upgrades_unlock_0"]
 }
 
 render_quests_ui :: proc() {
@@ -4363,11 +4405,11 @@ draw_next_quest_panel :: proc(quest: ^Quest, pos: Vector2) {
     required_level := first_unlockable.required_skill_levels[0]
 
     level_pos := pos + v2{cfg.level_req_offset_x, cfg.level_req_offset_y}
-    draw_text(
+    draw_wrapped_text(
         level_pos,
         fmt.tprintf("Requires %s Level %d", required_skill_name, first_unlockable.required_skill_levels[0]),
-        col = Colors.text * v4{1,1,1,1},
-        pivot = .center_left,
+        Text_Bounds{width=230, height=100},
+        scale = 1.0,
         z_layer = .ui,
     )
 }

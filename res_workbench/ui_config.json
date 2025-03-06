@@ -139,9 +139,9 @@
       "name_offset_x": -120.0,
       "name_offset_y": 25.0,
       "desc_offset_x": -120.0,
-      "desc_offset_y": 15.0,
+      "desc_offset_y": 2000.0,
       "level_req_offset_x": -120.0,
-      "level_req_offset_y": -50.0,
+      "level_req_offset_y": -20.0,
     },
     "tooltip":{
         "offset_x": 400.0,
