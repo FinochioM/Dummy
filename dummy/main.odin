@@ -1,7 +1,7 @@
 #+feature dynamic-literals
 package main
 
-VERSION :: "0.2.2"
+VERSION :: "0.4.0"
 
 import "base:runtime"
 import "base:intrinsics"
@@ -7039,35 +7039,26 @@ save_game :: proc() {
 
     data, err := json.marshal(save_data)
     if err != nil {
-        fmt.println("Error marshaling save data:", err)
         return
     }
 
     os.write_entire_file(SAVE_FILE_PATH, data)
-    fmt.println("Game saved successfully")
 }
 
 load_game :: proc() -> bool {
     if !os.exists(SAVE_FILE_PATH) {
-        fmt.println("No save file found, starting new game")
         return false
     }
 
     data, ok := os.read_entire_file(SAVE_FILE_PATH)
     if !ok {
-        fmt.println("Error reading save file")
         return false
     }
 
     save_data: Save_Data
     err := json.unmarshal(data, &save_data)
     if err != nil {
-        fmt.println("Error unmarshaling save data:", err)
         return false
-    }
-
-    if save_data.version != VERSION {
-        fmt.println("Warning: Save file version mismatch")
     }
 
     clear(&gs.skills_system.skills)
@@ -7180,7 +7171,6 @@ load_game :: proc() -> bool {
 
     en := entity_create()
     if en == nil {
-        fmt.println("Failed to create player entity")
         return false
     }
 
@@ -7194,7 +7184,6 @@ load_game :: proc() -> bool {
 
     gs.menu.state = .game
 
-    fmt.println("Game loaded successfully")
     return true
 }
 
@@ -7293,9 +7282,6 @@ particle_cursor: int
 
 particle_create :: proc() -> ^Particle {
 	p := &particles[particle_cursor%len(particles)]
-	if .valid in p.flags {
-		log_warning("Overwriting particles, increase buffer or ease up ol' chap")
-	}
 	p^ = {}
 	p.flags |= {.valid}
 	p.col = COLOR_WHITE
@@ -7586,9 +7572,6 @@ render_settings_menu :: proc(gs: ^Game_State) {
 
         music_pos := button_pos + v2{cfg.music_button.offset_x, cfg.music_button.offset_y}
         music_sprite := gs.settings.music_enabled ? cfg.music_button.on_sprite : cfg.music_button.off_sprite
-
-        fmt.println("Music enabled:", gs.settings.music_enabled)
-        fmt.println("Selected sprite:", music_sprite)
 
         draw_sprite_with_size(
             music_pos,
