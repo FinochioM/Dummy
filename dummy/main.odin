@@ -2863,6 +2863,8 @@ UI_Config :: struct {
             offset_y: f32,
             size_x: f32,
             size_y: f32,
+            bounds_x: f32,
+            bounds_y: f32,
             on_sprite: Image_Id,
             off_sprite: Image_Id,
         },
@@ -2871,6 +2873,8 @@ UI_Config :: struct {
             offset_y: f32,
             size_x: f32,
             size_y: f32,
+            bounds_x: f32,
+            bounds_y: f32,
             on_sprite: Image_Id,
             off_sprite: Image_Id,
         },
@@ -3356,7 +3360,7 @@ init_quests_system :: proc() -> Quests_System {
         cooldown = QUEST_TICK_TIME,
         required_skill = .speed_boost,
         required_skill_levels = {10, 12, 14, 16, 18},
-        gold_per_tick = {9, 18, 27, 80, 160},
+        gold_per_tick = {9, 18, 27, 46, 75},
         xp_per_tick = 15,
         xp_target_skill = .xp_boost,
     }
@@ -5219,7 +5223,7 @@ init_skills_system :: proc() -> Skills_System {
         active_skill = nil,
         dummies_killed = 0,
         is_unlocked = false,
-        gold = 0,
+        gold = 10000000,
         menu_open = false,
         active_menu = .normal,
         passive_xp_timer = 0,
@@ -7555,16 +7559,18 @@ update_settings_menu :: proc(gs: ^Game_State, dt: f32) {
     if gs.settings.menu_alpha > 0 {
         sound_pos := button_pos + v2{cfg.sound_button.offset_x, cfg.sound_button.offset_y}
         sound_size := v2{cfg.sound_button.size_x, cfg.sound_button.size_y}
+        sound_bounds := v2{cfg.sound_button.bounds_x, cfg.sound_button.bounds_y}
 
-        if is_point_in_rect(mouse_pos, sound_pos, sound_size * 2) && key_just_pressed(.LEFT_MOUSE) {
+        if is_point_in_rect(mouse_pos, sound_pos, sound_bounds) && key_just_pressed(.LEFT_MOUSE) {
             play_sound("button_click")
             gs.settings.sound_enabled = !gs.settings.sound_enabled
         }
 
         music_pos := button_pos + v2{cfg.music_button.offset_x, cfg.music_button.offset_y}
         music_size := v2{cfg.music_button.size_x, cfg.music_button.size_y}
+        music_bounds := v2{cfg.music_button.bounds_x, cfg.music_button.bounds_y}
 
-        if is_point_in_rect(mouse_pos, music_pos, music_size * 2) && key_just_pressed(.LEFT_MOUSE) {
+        if is_point_in_rect(mouse_pos, music_pos, music_bounds) && key_just_pressed(.LEFT_MOUSE) {
             play_sound("button_click")
             gs.settings.music_enabled = !gs.settings.music_enabled
             if gs.settings.music_enabled {
@@ -7578,7 +7584,7 @@ update_settings_menu :: proc(gs: ^Game_State, dt: f32) {
         }
 
         reset_pos := button_pos + v2{cfg.music_button.offset_x, cfg.music_button.offset_y - 50}
-        if is_point_in_rect(mouse_pos, reset_pos, music_size * 2) && key_just_pressed(.LEFT_MOUSE) {
+        if is_point_in_rect(mouse_pos, reset_pos, music_bounds) && key_just_pressed(.LEFT_MOUSE) {
             play_sound("button_click")
             reset_game_state()
             gs.settings.menu_open = false

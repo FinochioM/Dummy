@@ -294,6 +294,8 @@
         "offset_y": -50.0,
         "size_x": 6.0,
         "size_y": 6.0,
+        "bounds_x": 50.0,
+        "bounds_y": 45.0,
         "on_sprite": "sound_on",
         "off_sprite": "sound_off"
     },
@@ -302,6 +304,8 @@
         "offset_y": -100.0,
         "size_x": 6.0,
         "size_y": 6.0,
+        "bounds_x": 50.0,
+        "bounds_y": 45.0,
         "on_sprite": "music_on",
         "off_sprite": "music_off"
     }

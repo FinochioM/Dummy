@@ -59,6 +59,16 @@ update_sound :: proc() {
     using sound_st
 
     fmod_error_check(System_Update(system))
+
+    if playing && current_music != nil {
+        state: PLAYBACK_STATE
+        result := EventInstance_GetPlaybackState(current_music, &state)
+
+        if result == .OK && state == .PLAYBACK_STOPPED {
+            stop_sound(current_music)
+            play_background_music(&sound_st)
+        }
+    }
 }
 
 fmod_error_check :: proc(result: fcore.RESULT) {
@@ -94,5 +104,6 @@ play_background_music :: proc(sound_st: ^Sound_State) {
         fmod_error_check(EventDescription_CreateInstance(event_desc, &instance))
         fmod_error_check(EventInstance_Start(instance))
         sound_st.current_music = instance
+        sound_st.playing = true
     }
 }
