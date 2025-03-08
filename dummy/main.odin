@@ -1643,6 +1643,8 @@ DUMMY_POSITIONS := []Vector2{
     {450, -320},
     {600, -320},
     {150, -320},
+    {0, -320},
+    {-150, -320},
 }
 
 spawn_dummy :: proc(position: Vector2, is_ghost := false) -> ^Entity {
@@ -1741,8 +1743,8 @@ Arrow_Data :: struct {
     trail_timer: f32,
 }
 
-ARROW_BASE_DAMAGE :: 200.0 // 20
-ARROW_DAMAGE :: 200.0 // 20
+ARROW_BASE_DAMAGE :: 20.0 // 20
+ARROW_DAMAGE :: 20.0 // 20
 ELEMENTAL_ARROW_DAMAGE :: 40.0
 SHOOT_COOLDOWN :: 1.2
 ARROW_SPEED :: 1700.0
@@ -4576,7 +4578,7 @@ render_upgrades_menu :: proc() {
             type = .multiple_dummies,
             current_tier = &gs.upgrades_system.current_multiple_tier,
             max_tier = len(gs.upgrades_system.multiple_dummy_tiers) - 1,
-            tier_costs = []int{0, 2000, 10000},
+            tier_costs = []int{0, 2000, 10000, 160000},
             unlocked = true,
         },
         {
@@ -4902,7 +4904,7 @@ unlock_multiple_dummy_tier :: proc(tier: int) {
 Upgrades_System :: struct {
     dummy_tiers: [4]Dummy_Tier,
     current_tier: int,
-    multiple_dummy_tiers: [3]Multiple_Dummy_Tier,
+    multiple_dummy_tiers: [4]Multiple_Dummy_Tier,
     current_multiple_tier: int,
     auto_spawn_unlocked: bool,
     frames_since_last_spawn: f32,
@@ -5039,6 +5041,11 @@ multiple_dummy_tier_init :: proc(system: ^Upgrades_System) {
         unlocked = false,
         cost = 10000,
         max_dummies = 4,
+    }
+    system.multiple_dummy_tiers[3] = Multiple_Dummy_Tier{
+        unlocked = false,
+        cost = 16000,
+        max_dummies = 6,
     }
 }
 
@@ -5223,7 +5230,7 @@ init_skills_system :: proc() -> Skills_System {
         active_skill = nil,
         dummies_killed = 0,
         is_unlocked = false,
-        gold = 10000000,
+        gold = 0,
         menu_open = false,
         active_menu = .normal,
         passive_xp_timer = 0,
